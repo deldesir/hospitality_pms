@@ -125,6 +125,18 @@ class TestRoomCharge(IntegrationTestCase):
 
 	# -- tests ---------------------------------------------------------------
 
+	def test_check_in_gives_the_guest_a_customer_the_till_can_sell_to(self):
+		fx = self.world.fixtures
+		guest = fx.guest("Arrives")
+		reservation = fx.reservation(self.world.property, self.room_type, guest, rate_plan=self.rate_plan)
+		reservation_service.confirm(reservation)
+		line = frappe.get_all("Reservation Room", filters={"parent": reservation}, pluck="name")[0]
+		stay_service.check_in(reservation, line, self.rooms[1], skip_id_check=True)
+		frappe.db.commit()
+		customer = frappe.db.get_value("Guest", guest, "customer")
+		self.assertTrue(customer)
+		self.assertEqual(frappe.db.get_value("Customer", customer, "customer_name"), frappe.db.get_value("Guest", guest, "guest_name"))
+
 	def test_credit_sale_lands_on_the_folio_already_posted(self):
 		g = self.check_in("Tab")
 		inv = self.sale(g["customer"], self.till)

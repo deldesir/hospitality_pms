@@ -3,7 +3,7 @@
  "allow_bulk_edit": 1,
  "allow_rename": 1,
  "creation": "2026-08-08 16:35:16.561483",
- "description": "One posted charge line on a guest folio: what was charged, when, and against which business date. This is the property's own operational ledger line (HPMS-DEC-003) \u2014 it is not a general ledger entry. FolioService is the only writer; ERPNext posting, when required, is recorded back onto this row via `sales_invoice` rather than the row being derived from ERPNext.",
+ "description": "One posted charge line on a guest folio: what was charged, when, and against which business date. This is the property's own operational ledger line (HPMS-DEC-003) — it is not a general ledger entry. FolioService is the only writer; ERPNext posting, when required, is recorded back onto this row via `sales_invoice` rather than the row being derived from ERPNext.",
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
@@ -51,7 +51,7 @@
   },
   {
    "columns": 2,
-   "description": "The property business date this charge posted against. This can differ from the calendar charge date \u2014 e.g. a late-night charge posted before Night Audit rolls the business date forward \u2014 and both matter for reconciliation.",
+   "description": "The property business date this charge posted against. This can differ from the calendar charge date — e.g. a late-night charge posted before Night Audit rolls the business date forward — and both matter for reconciliation.",
    "fieldname": "business_date",
    "fieldtype": "Date",
    "label": "Business Date",
@@ -63,7 +63,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Charge Type",
-   "options": "Room Charge\nService Charge\nTax\nTourism Fee\nMunicipality Fee\nRoom Service\nMinibar\nLaundry\nTransport\nTelephone\nMiscellaneous\nAdjustment\nDiscount",
+   "options": "Room Charge\nService Charge\nTax\nTourism Fee\nMunicipality Fee\nRoom Service\nPoint of Sale\nMinibar\nLaundry\nTransport\nTelephone\nMiscellaneous\nAdjustment\nDiscount",
    "reqd": 1
   },
   {
@@ -253,7 +253,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-08-08 16:35:34.322806",
+ "modified": "2026-10-20 00:30:00.000000",
  "modified_by": "Administrator",
  "module": "Hospitality Folio",
  "name": "Folio Charge",

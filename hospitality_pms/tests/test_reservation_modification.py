@@ -1937,8 +1937,9 @@ class TestModificationGates(IntegrationTestCase):
 			function = getattr(reservations_api, name)
 
 			self.assertIn(function, frappe.whitelisted, msg=f"{name} is not a whitelisted method")
+			# Frappe stores the allowed methods as a list or, since mid-2026, a tuple.
 			self.assertEqual(
-				frappe.allowed_http_methods_for_whitelisted_func.get(function),
+				list(frappe.allowed_http_methods_for_whitelisted_func.get(function) or []),
 				["POST"],
 				msg=f"{name} must be POST so CSRF applies",
 			)

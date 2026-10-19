@@ -175,7 +175,11 @@ class NightAuditWorld(PostingWorld):
 		`return_against` wiring ERPNext's own return handling depends on, rather
 		than a hand-built negative invoice that would only look like one.
 		"""
-		from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_sales_return
+		try:
+			# ERPNext moved the mapping functions to mapper.py (May 2026)
+			from erpnext.accounts.doctype.sales_invoice.mapper import make_sales_return
+		except ImportError:
+			from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_sales_return
 
 		note = make_sales_return(invoice)
 		note.flags.ignore_permissions = True

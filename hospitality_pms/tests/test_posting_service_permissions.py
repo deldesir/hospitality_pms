@@ -61,10 +61,14 @@ def ptypes() -> list[str]:
 	assertion below - including the one that claims the posting identity holds
 	nothing but read.
 	"""
+	# Only the types both permission tables carry: Custom DocPerm has grown flags of
+	# its own (`is_app_disabled` since Frappe's app-disabling work) that `tabDocPerm`
+	# never had, and `granted()` reads the same column list from both tables.
+	standard = {field.fieldname for field in frappe.get_meta("DocPerm").fields}
 	return [
 		field.fieldname
 		for field in frappe.get_meta("Custom DocPerm").fields
-		if field.fieldtype == "Check" and field.fieldname != "if_owner"
+		if field.fieldtype == "Check" and field.fieldname != "if_owner" and field.fieldname in standard
 	]
 
 

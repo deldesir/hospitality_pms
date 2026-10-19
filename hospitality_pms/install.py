@@ -13,6 +13,7 @@ def after_install():
 	sync_roles()
 	sync_desktop_presence()
 	sync_schema_constraints()
+	sync_custom_fields()
 
 
 def after_migrate():
@@ -27,6 +28,14 @@ def after_migrate():
 	sync_roles()
 	sync_desktop_presence()
 	sync_schema_constraints()
+	sync_custom_fields()
+
+
+def sync_custom_fields():
+	"""The point-of-sale bridge's fields on POS Profile and Sales Invoice (setup/pos_bridge.py)."""
+	from hospitality_pms.setup.pos_bridge import ensure_custom_fields
+
+	ensure_custom_fields()
 
 
 def sync_schema_constraints():

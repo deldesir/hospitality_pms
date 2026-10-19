@@ -101,7 +101,13 @@ has_permission = {}
 # Document Events
 # ------------------------------------------------------------------------------
 
-doc_events = {}
+doc_events = {
+	# A till's "Pay on Account" sale lands on the guest's folio (services/pos_bridge.py).
+	"Sales Invoice": {
+		"on_submit": "hospitality_pms.services.pos_bridge.on_submit",
+		"before_cancel": "hospitality_pms.services.pos_bridge.before_cancel",
+	},
+}
 
 # ------------------------------------------------------------------------------
 # Scheduled Tasks

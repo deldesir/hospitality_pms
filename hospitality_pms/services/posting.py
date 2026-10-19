@@ -890,6 +890,33 @@ def _stale_posting_message(log: str) -> str:
 	).format(log)
 
 
+def record_external_invoice(doc, invoice: str, amount: float, idempotency_key: str, *, actor: str | None = None) -> str:
+	"""Enter an invoice ERPNext already holds (a point-of-sale sale charged to the room) in
+	the posting log as posted, so folio payments allocate against it and reconciliation
+	knows it is this folio's. Nothing is sent to ERPNext: the document exists."""
+	log, already_done = _claim(
+		doc.property,
+		"Sales Invoice",
+		idempotency_key,
+		folio=doc.name,
+		stay=doc.stay,
+		reservation=doc.reservation,
+		guest=doc.guest,
+		amount=amount,
+		payload={"source": "pos", "invoice": invoice},
+	)
+	if not already_done:
+		_mark_posted(log, "Sales Invoice", invoice, actor=actor)
+	return log
+
+
+def cancel_external_invoice(idempotency_key: str, reason: str) -> None:
+	"""The ERPNext document behind an external posting is being cancelled: say so on the log."""
+	log = frappe.db.get_value(POSTING_LOG, {"idempotency_key": idempotency_key}, "name")
+	if log:
+		frappe.db.set_value(POSTING_LOG, log, {"posting_status": CANCELLED, "error_message": reason}, update_modified=True)
+
+
 def _claim(
 	property_name: str,
 	posting_type: str,

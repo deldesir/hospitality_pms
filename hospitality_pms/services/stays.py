@@ -39,7 +39,7 @@ from hospitality_pms.services.exceptions import (
 	InvalidStateTransitionError,
 	throw,
 )
-from hospitality_pms.services.guests import assert_not_blacklisted
+from hospitality_pms.services.guests import assert_not_blacklisted, ensure_customer
 from hospitality_pms.services.property import get_business_date, get_property
 
 STAY_DOCTYPE = "Stay"
@@ -244,6 +244,16 @@ def check_in(
 		room=room,
 		billing_instructions=billing_instructions or reservation_doc.internal_notes,
 	)
+
+	# A guest in house will carry a balance, so their ERPNext Customer exists from this
+	# moment: the bar or restaurant till sells to that Customer and the sale finds the stay
+	# (services/pos_bridge.py). A walk-in who never checks in still gets none. Never a
+	# reason to refuse a check-in: a collision or a permission gap is logged and the
+	# Customer is made the first time money moves, as before.
+	try:
+		ensure_customer(reservation_doc.guest, get_property(reservation_doc.property).company)
+	except Exception:
+		frappe.log_error(title="Guest Customer at check-in", message=frappe.get_traceback())
 
 	frappe.db.set_value(
 		STAY_DOCTYPE,

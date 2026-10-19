@@ -11,6 +11,7 @@
  * a working menu, so a failure leaves the list empty rather than surfacing.
  */
 import { createResource } from 'frappe-ui'
+import { withSubpath } from '@/utils/subpath'
 
 /** How `frappe.apps.get_apps` names this app. We are already in it. */
 const THIS_APP = 'hospitality_pms'
@@ -91,5 +92,5 @@ export function getSwitchableApps(hasDeskAccess) {
 export function openApp(route) {
   if (!isNavigableRoute(route)) return
 
-  window.location.href = route
+  window.location.href = withSubpath(route)
 }

@@ -1,3 +1,5 @@
+// First: spells the site sub-path into every request before anything else loads.
+import '@/utils/subpath'
 import { FrappeUI, frappeRequest, setConfig } from 'frappe-ui'
 import { createApp } from 'vue'
 

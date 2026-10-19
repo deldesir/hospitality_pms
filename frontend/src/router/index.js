@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { SUBPATH, withSubpath } from '@/utils/subpath'
 
 import { session } from '@/stores/session'
 
@@ -202,7 +203,7 @@ const routes = [
 ]
 
 const router = createRouter({
-  history: createWebHistory('/pms'),
+  history: createWebHistory(SUBPATH + '/pms'),
   routes,
   scrollBehavior: () => ({ top: 0 }),
 })
@@ -214,7 +215,9 @@ router.beforeEach(async (to) => {
     } catch {
       // The session endpoint refuses Guest, so an unauthenticated deep link
       // returns to login and comes back to where the user was heading.
-      window.location.href = `/login?redirect-to=${encodeURIComponent('/pms' + to.fullPath)}`
+      window.location.href = withSubpath(
+        `/login?redirect-to=${encodeURIComponent(withSubpath('/pms' + to.fullPath))}`,
+      )
       return false
     }
   }

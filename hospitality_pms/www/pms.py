@@ -12,7 +12,10 @@ no_cache = 1
 def get_context(context):
 	"""Authenticate the shell and hand it the boot data it needs."""
 	if frappe.session.user == "Guest":
-		frappe.local.flags.redirect_location = "/login?redirect-to=/pms"
+		# Spelled under the site sub-path when the server knows one (frappe.utils.get_url_prefix on
+		# forks that mount the site at e.g. /erp); plain paths otherwise.
+		prefix = getattr(frappe.utils, "get_url_prefix", lambda: "")() or ""
+		frappe.local.flags.redirect_location = f"{prefix}/login?redirect-to={prefix}/pms"
 		raise frappe.Redirect
 
 	csrf_token = frappe.sessions.get_csrf_token()

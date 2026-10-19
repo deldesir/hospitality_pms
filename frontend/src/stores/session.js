@@ -6,6 +6,7 @@
  * (SAD section 11).
  */
 import { computed, reactive } from 'vue'
+import { withSubpath } from '@/utils/subpath'
 
 import { apiResource } from '@/resources'
 import { setLocale } from '@/utils/i18n'
@@ -73,6 +74,6 @@ export const session = {
 
   /** Frappe's logout endpoint; returns the browser to the login page. */
   logout() {
-    window.location.href = '/api/method/logout'
+    window.location.href = withSubpath('/api/method/logout')
   },
 }

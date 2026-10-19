@@ -33,7 +33,7 @@ class TestRoomCharge(IntegrationTestCase):
 		cls.world = PostingWorld("POSB", "PB")
 		fx = cls.world.fixtures
 		cls.room_type = fx.room_type(cls.world.property, "BAR", base_rate=100)
-		cls.rooms = fx.rooms(cls.world.property, cls.room_type, count=2)
+		cls.rooms = fx.rooms(cls.world.property, cls.room_type, count=12)
 		cls.rate_plan = fx.rate_plan(cls.world.property, cls.room_type, base_rate=100)
 		cls.beer = fx.erp_item("BEER")
 		cls.till = cls._pos_profile("Bar", charge_to_room=1)
@@ -77,20 +77,27 @@ class TestRoomCharge(IntegrationTestCase):
 
 	# -- a guest in house, with the Customer a till can sell to ---------------
 
-	def check_in(self, first_name: str, room_index: int = 0) -> dict:
+	def free_room(self) -> str:
+		"""Check-ins commit, so a guest stays in house across tests: take the next vacant room."""
+		for room in self.rooms:
+			if frappe.db.get_value("Hotel Room", room, "occupancy_status") == "Vacant":
+				return room
+		raise AssertionError("no vacant room left for this test")
+
+	def check_in(self, first_name: str) -> dict:
 		fx = self.world.fixtures
 		guest = fx.guest(first_name)
 		reservation = fx.reservation(self.world.property, self.room_type, guest, rate_plan=self.rate_plan)
 		reservation_service.confirm(reservation)
 		line = frappe.get_all("Reservation Room", filters={"parent": reservation}, pluck="name")[0]
-		result = stay_service.check_in(reservation, line, self.rooms[room_index], skip_id_check=True)
+		result = stay_service.check_in(reservation, line, self.free_room(), skip_id_check=True)
 		customer = guest_service.ensure_customer(guest, self.world.company)
 		frappe.db.commit()
 		return {"guest": guest, "customer": customer, "stay": result["stay"], "folio": result["folio"]}
 
 	def sale(self, customer: str, pos_profile: str, *, qty: float = 2, rate: float = 150, paid: float = 0):
-		"""A submitted POS sale. `paid` 0 is a Pay-on-Account credit sale (POS Next's flag),
-		anything else is cash taken at the till."""
+		"""A submitted POS sale. `paid` 0 is a sale on the customer's account (a payment row of
+		zero, as a till's partial payment leaves it), anything else is cash taken at the till."""
 		inv = frappe.get_doc(
 			{
 				"doctype": "Sales Invoice",
@@ -102,10 +109,7 @@ class TestRoomCharge(IntegrationTestCase):
 				"items": [{"item_code": self.beer, "qty": qty, "rate": rate}],
 			}
 		)
-		if paid:
-			inv.append("payments", {"mode_of_payment": "Cash", "amount": paid})
-		else:
-			inv.flags.pos_next_credit_sale = 1
+		inv.append("payments", {"mode_of_payment": "Cash", "amount": paid})
 		inv.flags.ignore_permissions = True
 		inv.insert()
 		inv.submit()
@@ -131,7 +135,7 @@ class TestRoomCharge(IntegrationTestCase):
 		reservation = fx.reservation(self.world.property, self.room_type, guest, rate_plan=self.rate_plan)
 		reservation_service.confirm(reservation)
 		line = frappe.get_all("Reservation Room", filters={"parent": reservation}, pluck="name")[0]
-		stay_service.check_in(reservation, line, self.rooms[1], skip_id_check=True)
+		stay_service.check_in(reservation, line, self.free_room(), skip_id_check=True)
 		frappe.db.commit()
 		customer = frappe.db.get_value("Guest", guest, "customer")
 		self.assertTrue(customer)
@@ -193,12 +197,12 @@ class TestRoomCharge(IntegrationTestCase):
 		frappe.db.rollback()
 
 	def test_two_rooms_in_house_need_the_pms(self):
-		g = self.check_in("Double", room_index=0)
+		g = self.check_in("Double")
 		fx = self.world.fixtures
 		second = fx.reservation(self.world.property, self.room_type, g["guest"], rate_plan=self.rate_plan)
 		reservation_service.confirm(second)
 		line = frappe.get_all("Reservation Room", filters={"parent": second}, pluck="name")[0]
-		stay_service.check_in(second, line, self.rooms[1], skip_id_check=True)
+		stay_service.check_in(second, line, self.free_room(), skip_id_check=True)
 		frappe.db.commit()
 		with self.assertRaises(FolioError):
 			self.sale(g["customer"], self.till)
@@ -253,9 +257,9 @@ class TestRoomCharge(IntegrationTestCase):
 				"pos_profile": self.till,
 				"update_stock": 0,
 				"items": [{"item_code": self.beer, "qty": -1, "rate": 150}],
+				"payments": [{"mode_of_payment": "Cash", "amount": 0}],
 			}
 		)
-		ret.flags.pos_next_credit_sale = 1
 		ret.flags.ignore_permissions = True
 		ret.insert()
 		ret.submit()

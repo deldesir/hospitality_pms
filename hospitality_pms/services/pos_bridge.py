@@ -11,9 +11,20 @@ checkout invoice skips it; and the invoice is entered in the financial posting l
 checkout payment allocates against it like any folio invoice. The guest's balance includes
 the bar bill; the ledger sees one invoice, one receivable, one settlement.
 
+Money can also come back the other way. The till lists the bill among its unpaid invoices,
+and a cashier may collect it there before the guest reaches the desk. That receipt is a
+Payment Entry against the invoice; it is mirrored onto the folio as a payment already
+posted to ERPNext, so the desk does not collect the same bill twice, and reversed if the
+receipt is cancelled while the folio is still open.
+
 Enabled per till with the POS Profile field "Charge credit sales to the guest's room". On
 such a till a credit sale to a customer who is not in house is refused: the till exists to
 charge rooms, and an open credit to a stranger is a mistake, not a feature.
+
+While a guest is in house, their Customer carries the room number (`hpms_room`, kept by
+`guests.sync_customer_room`), and the till shows it beside the name through POS Next's
+customer annotation hook, so a cashier choosing between two guests of the same name picks
+by room.
 """
 
 import frappe
@@ -25,11 +36,20 @@ from hospitality_pms.services import posting as posting_service
 from hospitality_pms.services import stays as stay_service
 from hospitality_pms.services.base import lock_and_get_doc
 from hospitality_pms.services.exceptions import FolioError, throw
+from hospitality_pms.services.guests import CUSTOMER_ROOM_FIELD
 
 CHARGE_TYPE = "Point of Sale"
 TILL_FLAG = "hpms_charge_to_room"           # Custom Field on POS Profile
 INVOICE_STAY_FIELD = "hpms_stay"            # Custom Fields on Sales Invoice
 INVOICE_FOLIO_FIELD = "hpms_folio"
+
+#: Set on the Payment Entries the PMS raises itself (checkout, deposits), so the receipt
+#: hook below does not mirror the folio's own settlement back onto the folio.
+FOLIO_SETTLEMENT_FLAG = "hospitality_folio_settlement"
+
+#: Folio payment method for a till receipt whose Mode of Payment the folio does not name,
+#: by the mode's own type.
+METHOD_BY_MODE_TYPE = {"Cash": "Cash", "Bank": "Bank Transfer", "Phone": "Online Gateway", "General": "Voucher"}
 
 
 def is_room_charge_till(pos_profile: str | None) -> bool:
@@ -42,13 +62,16 @@ def charge_key(invoice: str) -> str:
 	return f"pos-invoice:{invoice}"
 
 
+def receipt_key(payment_entry: str, invoice: str) -> str:
+	return f"pos-receipt:{payment_entry}:{invoice}"
+
+
 def find_in_house_stays(customer: str) -> list[dict]:
 	"""The stays in house whose guest is this ERPNext customer, newest check-in first.
 
-	A guest's Customer is created the first time money moves (see
-	`guests.ensure_customer`), and a folio may carry a customer of its own (a company
-	paying for the stay). Both routes are read, so the till finds the guest whichever way
-	the Customer came to exist.
+	A guest's Customer is created at check-in (see `guests.ensure_customer`), and a folio
+	may carry a customer of its own (a company paying for the stay). Both routes are read,
+	so the till finds the guest whichever way the Customer came to exist.
 	"""
 	in_house = (stay_service.IN_HOUSE, stay_service.DUE_OUT)
 	guests = frappe.get_all("Guest", filters={"customer": customer}, pluck="name")
@@ -159,12 +182,18 @@ def charge_invoice_to_room(invoice) -> dict | None:
 
 
 def credit_return_to_room(invoice) -> dict | None:
-	"""A POS return against a room-charged sale takes the same amount back off the folio.
+	"""A POS return against a room-charged sale takes the unpaid part back off the folio.
 
 	POS Next books a linked return with `update_outstanding_for_self = 0`, so the credit
 	sits on the original invoice: the checkout payment allocates against what is then
 	still outstanding, and the folio must agree. An adjustment line, signed and reasoned,
 	is what the folio allows for that.
+
+	Only what the guest still owed moves. A sale paid partly at the till is returned the
+	same way: the till refunds the paid share in money (the return's payment rows) and
+	credits the receivable for the rest. The folio only ever carried the receivable, so
+	only that share comes off it; a return refunded in full at the till changes nothing on
+	the folio.
 	"""
 	if not cint(invoice.is_return) or not invoice.return_against or invoice.docstatus != 1:
 		return None
@@ -174,18 +203,24 @@ def credit_return_to_room(invoice) -> dict | None:
 	if not original or not original.get(INVOICE_FOLIO_FIELD):
 		return None
 	folio = original[INVOICE_FOLIO_FIELD]
+	refunded = sum(abs(flt(row.amount)) for row in invoice.get("payments") or [])
+	credit = flt(abs(flt(invoice.grand_total)) - refunded, 2)
+	if credit <= 0:
+		return None
 	status = frappe.db.get_value(folio_service.FOLIO_DOCTYPE, folio, "folio_status")
 	if status not in folio_service.POSTABLE_STATES:
 		throw(
 			_("Folio {0} is {1}: the sale was settled at checkout, refund the guest directly.").format(folio, _(status)),
 			exc=FolioError,
 		)
-	amount = -abs(flt(invoice.grand_total))
+	description = _("Return {0} against {1}").format(invoice.name, invoice.return_against)
+	if refunded:
+		description += " " + _("({0} refunded at the till)").format(flt(refunded, 2))
 	result = folio_service.post_charge(
 		folio,
 		"Adjustment",
-		_("Return {0} against {1}").format(invoice.name, invoice.return_against),
-		amount,
+		description,
+		-credit,
 		idempotency_key=charge_key(invoice.name),
 		reason=_("Point of sale return {0}").format(invoice.name),
 		reference_doctype="Sales Invoice",
@@ -219,10 +254,138 @@ def release_cancelled_invoice(invoice) -> None:
 		)
 	if not row.is_reversed:
 		folio_service.reverse_charge(folio, row.name, _("Sales Invoice {0} cancelled").format(invoice.name))
-	posting_service.cancel_external_invoice(charge_key(invoice.name), _("Sales Invoice {0} cancelled").format(invoice.name))
+	posting_service.cancel_external_posting(charge_key(invoice.name), _("Sales Invoice {0} cancelled").format(invoice.name))
 
 
-# -- hooks (Sales Invoice doc_events) ----------------------------------------
+# -- receipts taken at the till ----------------------------------------------
+
+
+def _folio_method(entry) -> str:
+	"""The folio payment method a Payment Entry's Mode of Payment maps onto."""
+	mode = entry.get("mode_of_payment")
+	methods = (frappe.get_meta("Folio Payment").get_field("payment_method").options or "").split("\n")
+	if mode in methods:
+		return mode
+	for method, erp_mode in posting_service.PAYMENT_MODE_MAP.items():
+		if erp_mode == mode and method in methods:
+			return method
+	mode_type = frappe.db.get_value("Mode of Payment", mode, "type") if mode else None
+	return METHOD_BY_MODE_TYPE.get(mode_type, "Voucher")
+
+
+def _room_charged_references(entry) -> list[tuple[str, str, float]]:
+	"""(invoice, folio, allocated) for every reference of this receipt that is a sale charged to a room."""
+	found = []
+	for ref in entry.get("references") or []:
+		if ref.reference_doctype != "Sales Invoice" or flt(ref.allocated_amount) <= 0:
+			continue
+		folio = frappe.db.get_value("Sales Invoice", ref.reference_name, INVOICE_FOLIO_FIELD)
+		if folio:
+			found.append((ref.reference_name, folio, flt(ref.allocated_amount)))
+	return found
+
+
+def mirror_till_receipt(entry) -> list[dict]:
+	"""A receipt taken at the till against a room-charged sale is money the guest no longer
+	owes the hotel: it lands on the folio as a payment already posted to ERPNext.
+
+	The Payment Entry is the ledger document; the folio row points at it and the posting
+	log carries it, so checkout neither posts it again nor fails to find it, and the
+	reconciliation counts it. A receipt after the folio was settled is left alone: the
+	open balance it pays lives in receivables by then, which is where the receipt goes.
+	"""
+	if entry.docstatus != 1 or entry.get("payment_type") != "Receive" or entry.get("party_type") != "Customer":
+		return []
+	if entry.flags.get(FOLIO_SETTLEMENT_FLAG):
+		return []
+	results = []
+	for invoice, folio, allocated in _room_charged_references(entry):
+		status = frappe.db.get_value(folio_service.FOLIO_DOCTYPE, folio, "folio_status")
+		folio_property = frappe.db.get_value(folio_service.FOLIO_DOCTYPE, folio, "property")
+		if status not in folio_service.POSTABLE_STATES:
+			folio_service._log(
+				folio,
+				folio_property,
+				"Point of sale receipt after settlement",
+				amount=allocated,
+				details={"payment_entry": entry.name, "sales_invoice": invoice, "folio_status": status},
+			)
+			continue
+		key = receipt_key(entry.name, invoice)
+		result = folio_service.post_payment(
+			folio, allocated, _folio_method(entry), idempotency_key=key, reference=entry.name, payer="Guest"
+		)
+		if not result.get("duplicate"):
+			frappe.db.set_value(
+				"Folio Payment", result["row"], {"is_posted_to_erp": 1, "payment_entry": entry.name}, update_modified=False
+			)
+			folio_doc = frappe.get_doc(folio_service.FOLIO_DOCTYPE, folio)
+			posting_service.record_external_document(
+				folio_doc, "Payment Entry", entry.name, allocated, key, actor=frappe.session.user
+			)
+			folio_service._log(
+				folio,
+				folio_doc.property,
+				"Point of sale receipt taken at the till",
+				amount=allocated,
+				details={"payment_entry": entry.name, "sales_invoice": invoice, "mode_of_payment": entry.get("mode_of_payment")},
+			)
+		results.append({**result, "folio": folio, "invoice": invoice})
+	return results
+
+
+def release_cancelled_receipt(entry) -> None:
+	"""A cancelled till receipt goes back onto the folio, by reversal, while the folio is
+	still open. Once the guest has settled, the receipt was part of that settlement and
+	cannot be cancelled: refund the guest instead."""
+	reason = _("Payment Entry {0} cancelled").format(entry.name)
+	for invoice, folio, _allocated in _room_charged_references(entry):
+		key = receipt_key(entry.name, invoice)
+		doc = lock_and_get_doc(folio_service.FOLIO_DOCTYPE, folio)
+		row = next((p for p in doc.payments if p.idempotency_key == key), None)
+		if not row:
+			continue
+		if doc.folio_status not in folio_service.POSTABLE_STATES:
+			throw(
+				_("Folio {0} is {1}: receipt {2} was counted when the guest settled and cannot be cancelled. Refund the guest instead.").format(
+					folio, _(doc.folio_status), entry.name
+				),
+				exc=FolioError,
+			)
+		if not row.is_reversed:
+			folio_service.reverse_payment(folio, row.name, reason, check_role=False)
+		posting_service.cancel_external_posting(key, reason)
+
+
+# -- the till's customer picker ---------------------------------------------
+
+
+def annotate_till_customers(customers: list, pos_profile: str | None = None) -> None:
+	"""POS Next `pos_next_customer_annotate` hook: label a guest in house with the room.
+
+	`customers` are the dicts the till will show (and cache); a `note` is added to those
+	whose Customer carries a room. The room is written on the Customer at check-in,
+	check-out and room move (`guests.sync_customer_room`), which is also what makes the
+	till's delta sync and its live customer event pick the change up.
+	"""
+	names = [c.get("name") for c in customers if isinstance(c, dict) and c.get("name")]
+	if not names or not frappe.db.has_column("Customer", CUSTOMER_ROOM_FIELD):
+		return
+	rooms = dict(
+		frappe.get_all(
+			"Customer",
+			filters={"name": ("in", names), CUSTOMER_ROOM_FIELD: ("!=", "")},
+			fields=["name", CUSTOMER_ROOM_FIELD],
+			as_list=True,
+		)
+	)
+	for customer in customers:
+		room = rooms.get(customer.get("name")) if isinstance(customer, dict) else None
+		if room:
+			customer["note"] = _("Room {0}").format(room)
+
+
+# -- hooks (doc_events) ------------------------------------------------------
 
 
 def on_submit(doc, method=None):
@@ -234,3 +397,11 @@ def on_submit(doc, method=None):
 
 def before_cancel(doc, method=None):
 	release_cancelled_invoice(doc)
+
+
+def on_payment_submit(doc, method=None):
+	mirror_till_receipt(doc)
+
+
+def before_payment_cancel(doc, method=None):
+	release_cancelled_receipt(doc)

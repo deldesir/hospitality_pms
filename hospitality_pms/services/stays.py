@@ -41,7 +41,7 @@ from hospitality_pms.services.exceptions import (
 	InvalidStateTransitionError,
 	throw,
 )
-from hospitality_pms.services.guests import assert_not_blacklisted, ensure_customer
+from hospitality_pms.services.guests import assert_not_blacklisted, ensure_customer, sync_customer_room
 from hospitality_pms.services.property import get_business_date, get_property
 
 STAY_DOCTYPE = "Stay"
@@ -260,12 +260,8 @@ def check_in(
 	# moment: the bar or restaurant till sells to that Customer and the sale finds the stay
 	# (services/pos_bridge.py). A walk-in who never checks in still gets none. Never a
 	# reason to refuse a check-in: a collision or a permission gap is logged and the
-	# Customer is made the first time money moves, as before.
-	try:
-		ensure_customer(reservation_doc.guest, get_property(reservation_doc.property).company)
-	except Exception:
-		frappe.log_error(title="Guest Customer at check-in", message=frappe.get_traceback())
-
+	# Customer is made the first time money moves, as before. The Customer also carries
+	# the room while the guest is in house (`sync_customer_room`), which the till shows.
 	frappe.db.set_value(
 		STAY_DOCTYPE,
 		stay.name,
@@ -277,6 +273,11 @@ def check_in(
 		},
 		update_modified=True,
 	)
+	try:
+		ensure_customer(reservation_doc.guest, get_property(reservation_doc.property).company)
+		sync_customer_room(reservation_doc.guest)
+	except Exception:
+		frappe.log_error(title="Guest Customer at check-in", message=frappe.get_traceback())
 
 	if kind != short_stay.NIGHT:
 		# A day-use or hourly stay consumes no night, so the night audit never charges it:
@@ -631,6 +632,12 @@ def change_room(
 
 	if doc.folio:
 		frappe.db.set_value(folio_service.FOLIO_DOCTYPE, doc.folio, "room", new_room, update_modified=False)
+
+	# The room label on the guest's Customer follows the guest (the till shows it).
+	try:
+		sync_customer_room(doc.guest)
+	except Exception:
+		frappe.log_error(title="Guest Customer at room move", message=frappe.get_traceback())
 
 	# The inventory row has to follow the guest, and until 16.7.2 it did not.
 	#

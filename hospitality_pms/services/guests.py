@@ -174,6 +174,52 @@ def ensure_customer(guest: str, company: str | None = None) -> str:
 	return customer.name
 
 
+#: Custom Field on Customer (setup/pos_bridge.py): the room(s) the guest is in while in
+#: house, blank otherwise. The till shows it beside the name.
+CUSTOMER_ROOM_FIELD = "hpms_room"
+
+#: Stay statuses that count as "in house" here; `stays` imports this module, so the
+#: constants cannot come from there.
+_IN_HOUSE_STAY_STATES = ("In House", "Due Out")
+
+
+def sync_customer_room(guest: str) -> str | None:
+	"""Keep the guest's Customer labelled with the room while they are in house.
+
+	Called after check-in, check-out and a room move. The label is what a till reads to
+	tell two guests of one name apart (POS Next's customer annotation hook, served by
+	`pos_bridge.annotate_till_customers`).
+
+	A real save rather than a column write when it can be: the till learns of a Customer
+	through that document's own hooks, at once over its live channel and, for a till that
+	was offline, through `modified` at its next delta sync. Should the save be refused (a
+	Customer that no longer passes ERPNext's own validation), the column is written on
+	its own and the till catches up at its next sync; the stay never depends on it.
+	"""
+	customer = frappe.db.get_value(GUEST_DOCTYPE, guest, "customer")
+	if not customer or not frappe.db.has_column("Customer", CUSTOMER_ROOM_FIELD):
+		return None
+	rooms = frappe.get_all(
+		"Stay",
+		filters={"guest": guest, "stay_status": ("in", _IN_HOUSE_STAY_STATES)},
+		order_by="checked_in_on desc",
+		pluck="room",
+	)
+	label = ", ".join(dict.fromkeys(room for room in rooms if room))
+	current = frappe.db.get_value("Customer", customer, CUSTOMER_ROOM_FIELD) or ""
+	if current == label:
+		return label or None
+	try:
+		doc = frappe.get_doc("Customer", customer)
+		doc.set(CUSTOMER_ROOM_FIELD, label)
+		doc.flags.ignore_permissions = True
+		doc.save()
+	except Exception:
+		frappe.log_error(title="Guest Customer room label", message=frappe.get_traceback())
+		frappe.db.set_value("Customer", customer, CUSTOMER_ROOM_FIELD, label)
+	return label or None
+
+
 def _default_customer_group() -> str:
 	group = frappe.db.get_single_value("Selling Settings", "customer_group")
 

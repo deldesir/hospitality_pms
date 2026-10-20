@@ -449,6 +449,42 @@ def reverse_charge(folio: str, charge_row: str, reason: str) -> dict:
 	return {"reversed": charge_row, "balance": doc.balance}
 
 
+def reverse_payment(folio: str, payment_row: str, reason: str, *, check_role: bool = True) -> dict:
+	"""Reverse a recorded payment: the row stays, marked reversed with the reason, and the
+	balance no longer counts it.
+
+	No compensating line, unlike a charge: `_recalculate` leaves reversed payments out,
+	so the row itself is the record. `check_role` is False only for the POS bridge, where
+	the authority is ERPNext's own cancel permission on the Payment Entry being withdrawn.
+	"""
+	if check_role:
+		require_role(FINANCE_ROLES)
+	if not reason or not reason.strip():
+		throw(_("A reason is required to reverse a payment."), exc=FolioError)
+	doc = lock_and_get_doc(FOLIO_DOCTYPE, folio)
+	original = next((row for row in doc.payments if row.name == payment_row), None)
+	if not original:
+		throw(_("Payment {0} does not belong to folio {1}.").format(payment_row, folio), exc=FolioError)
+	if original.is_reversed:
+		throw(_("Payment {0} has already been reversed.").format(payment_row), exc=FolioError)
+	if doc.folio_status == CLOSED:
+		throw(_("Folio {0} is closed; its payments cannot be reversed.").format(folio), exc=FolioError)
+	original.is_reversed = 1
+	original.reversal_reason = reason.strip()
+	_recalculate(doc)
+	with service_context(FINANCIAL_POSTING):
+		doc.save(ignore_permissions=True)
+	_log(
+		folio,
+		doc.property,
+		"Payment reversed",
+		amount=-flt(original.amount),
+		reason=reason.strip(),
+		details={"payment_row": payment_row, "payment_entry": original.payment_entry},
+	)
+	return {"reversed": payment_row, "balance": doc.balance}
+
+
 def post_adjustment(
 	folio: str,
 	amount: float,

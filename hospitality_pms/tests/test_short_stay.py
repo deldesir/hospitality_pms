@@ -5,7 +5,8 @@ priced by the day or by blocks; it holds a room for its hours, so it is refused 
 overnight guests fill the type through those hours and allowed when the hours fit around
 them; hourly stays share one room when their hours do not overlap; the charge is posted at
 check-in and never by the night audit; room assignment obeys the same hours; a walk-in can
-be a day use; a day use is settled at checkout like a night.
+be a day use; a day use is settled at checkout like a night. The line carries its kind from
+its plan, a short plan never sells nights, and a short stay cannot be extended into a night.
 """
 
 import frappe
@@ -19,7 +20,7 @@ from hospitality_pms.services import short_stay
 from hospitality_pms.services import stays as stay_service
 from hospitality_pms.services import walk_in as walk_in_service
 from hospitality_pms.services.availability import get_availability
-from hospitality_pms.services.exceptions import AvailabilityError, HospitalityPMSError
+from hospitality_pms.services.exceptions import AvailabilityError, HospitalityPMSError, InvalidStateTransitionError
 from hospitality_pms.services.rates import get_rate_breakdown
 from hospitality_pms.tests.posting_world import PostingWorld
 
@@ -43,6 +44,10 @@ class TestShortStays(IntegrationTestCase):
 		cls.day_pair = fx.rate_plan(prop, cls.pair, base_rate=60, code="DP", stay_kind="Day Use", day_use_from="09:00:00", day_use_until="18:00:00")
 		cls.day_single = fx.rate_plan(prop, cls.single, base_rate=60, code="DS", stay_kind="Day Use", day_use_from="09:00:00", day_use_until="18:00:00")
 		cls.hourly_single = fx.rate_plan(prop, cls.single, base_rate=25, code="HS", stay_kind="Hourly", block_hours=3)
+		# a room of its own for the stay that is checked in and then refused an extension
+		cls.lone = fx.room_type(prop, "LONE", base_rate=100)
+		cls.lone_rooms = fx.rooms(prop, cls.lone, count=1)
+		cls.day_lone = fx.rate_plan(prop, cls.lone, base_rate=60, code="DL", stay_kind="Day Use", day_use_from="09:00:00", day_use_until="18:00:00")
 		# the checkout invoice needs an item behind the new charge types
 		profile = frappe.get_doc("Posting Profile", cls.world.profile)
 		for charge_type in ("Day Use", "Hourly"):
@@ -99,7 +104,7 @@ class TestShortStays(IntegrationTestCase):
 		return name
 
 	def line_of(self, reservation):
-		return frappe.get_all("Reservation Room", filters={"parent": reservation}, fields=["name", "arrival_time", "departure_time", "nights", "total_amount", "room_rate"])[0]
+		return frappe.get_all("Reservation Room", filters={"parent": reservation}, fields=["name", "arrival_time", "departure_time", "nights", "total_amount", "room_rate", "stay_kind"])[0]
 
 	def available_night(self, room_type, date):
 		figures = get_availability(self.prop, date, add_days(date, 1), room_type)["room_types"][room_type]["by_night"][str(date)]
@@ -123,6 +128,27 @@ class TestShortStays(IntegrationTestCase):
 	def test_a_same_day_booking_needs_a_short_plan(self):
 		with self.assertRaises(HospitalityPMSError):
 			self.reserve(self.pair, self.night_pair)
+		frappe.db.rollback()
+
+	def test_a_short_plan_cannot_sell_nights(self):
+		day = add_days(self.today, 60)
+		with self.assertRaises(HospitalityPMSError):
+			get_rate_breakdown(self.prop, self.pair, day, add_days(day, 1), rate_plan=self.day_pair)
+		with self.assertRaises(HospitalityPMSError):
+			self.reserve(self.pair, self.day_pair, arrival=day, departure=add_days(day, 1))
+		frappe.db.rollback()
+		with self.assertRaises(HospitalityPMSError):
+			self.reserve(self.single, self.hourly_single, arrival=day, departure=add_days(day, 2), arrival_time="09:00:00")
+		frappe.db.rollback()
+
+	def test_the_line_carries_its_kind(self):
+		day = add_days(self.today, 61)
+		night = self.reserve(self.pair, self.night_pair, arrival=day, departure=add_days(day, 1))
+		self.assertEqual(self.line_of(night)["stay_kind"], "Night")
+		day_use = self.reserve(self.pair, self.day_pair, arrival=day)
+		self.assertEqual(self.line_of(day_use)["stay_kind"], "Day Use")
+		hourly = self.reserve(self.single, self.hourly_single, arrival=day, arrival_time="09:00:00")
+		self.assertEqual(self.line_of(hourly)["stay_kind"], "Hourly")
 		frappe.db.rollback()
 
 	def test_an_hourly_booking_needs_an_arrival_time(self):
@@ -192,6 +218,21 @@ class TestShortStays(IntegrationTestCase):
 		self.assertEqual(charges[0]["idempotency_key"], f"short-stay:{stay.name}")
 		owed = [s["name"] for s in stay_service.get_stays_for_room_charge(self.prop, self.today)]
 		self.assertNotIn(stay.name, owed)
+		self.checkout_settles(stay)
+
+	def test_a_short_stay_cannot_be_extended_into_a_night(self):
+		res = self.confirmed(self.lone, self.day_lone, arrival_time="09:00:00", departure_time="12:00:00")
+		result = stay_service.check_in(res, self.line_of(res)["name"], self.lone_rooms[0], skip_id_check=True)
+		frappe.db.commit()
+		stay = frappe.get_doc("Stay", result["stay"])
+		with self.assertRaises(InvalidStateTransitionError):
+			stay_service.extend_stay(stay.name, add_days(self.today, 1))
+		frappe.db.rollback()
+		line = self.line_of(res)
+		self.assertEqual((line["nights"], line["stay_kind"]), (0, "Day Use"))
+		self.assertEqual(getdate(frappe.db.get_value("Stay", stay.name, "departure_date")), self.today)
+		self.assertEqual(frappe.db.count("Folio Charge", {"parent": stay.folio}), 1)
+		self.assertNotIn(stay.name, [s["name"] for s in stay_service.get_stays_for_room_charge(self.prop, self.today)])
 		self.checkout_settles(stay)
 
 	def checkout_settles(self, stay):

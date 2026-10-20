@@ -391,10 +391,12 @@ def get_rate_breakdown(
 	same type on the same dates prices identically.
 	"""
 	rate_plan = resolve_rate_plan(property_name, room_type, arrival, rate_plan)
-	if getdate(arrival) == getdate(departure):
-		# a day-use or hourly stay: priced by its plan's day or blocks, never by nights
-		from hospitality_pms.services.short_stay import short_breakdown
+	from hospitality_pms.services.short_stay import SHORT_KINDS, line_kind, short_breakdown
 
+	# The plan's kind and the dates must agree (a day-use plan never prices a night, a
+	# night plan never prices a same-day stay); a short stay is then priced by its plan's
+	# day or blocks, never by nights.
+	if line_kind(rate_plan, arrival, departure) in SHORT_KINDS:
 		return short_breakdown(
 			property_name,
 			room_type,

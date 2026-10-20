@@ -1,6 +1,7 @@
 <!--
-  English/Arabic switch. The choice is persisted against the User so Desk,
-  server messages and this frontend stay in one language (SAD section 12).
+  Language switch (English, Arabic, French). The choice is persisted against the
+  User so Desk, server messages and this frontend stay in one language (SAD
+  section 12).
 -->
 <template>
   <Dropdown :options="options" placement="top">
@@ -28,6 +29,7 @@ import { t } from '@/utils/i18n'
 const LANGUAGE_LABELS = {
   en: 'English',
   ar: 'العربية',
+  fr: 'Français',
 }
 
 const switching = ref(false)

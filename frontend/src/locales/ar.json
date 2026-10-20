@@ -1293,5 +1293,15 @@
   "page.reservation.rooms.change_rate_plan": "تغيير خطة السعر",
   "page.reservation.rooms.rate_plan_hint": "تُعرض فقط الخطط التي يسعّرها الخادم لنوع الغرفة هذا في هذه التواريخ.",
   "page.reservation.rooms.rate_plan_none": "لا توجد خطة سعر تغطي نوع الغرفة هذا في هذه التواريخ.",
-  "page.reservation.rooms.rate_plan_changed": "تم تغيير خطة السعر."
+  "page.reservation.rooms.rate_plan_changed": "تم تغيير خطة السعر.",
+  "page.reservation_new.short_stay_note": "{kind}: إقامة في اليوم نفسه. يغادر النزيل في تاريخ الوصول؛ حدّد الساعات.",
+  "page.reservation_new.arrival_time": "من (الوقت)",
+  "page.reservation_new.departure_time": "حتى (الوقت)",
+  "page.reservation_new.blocks": "فترات من {hours} س",
+  "page.reservation_new.until": "حتى {time}",
+  "page.walk_in.short_stay_note": "{kind}: إقامة في اليوم نفسه. المغادرة اليوم؛ حدّد الساعات.",
+  "page.walk_in.arrival_time": "من (الوقت)",
+  "page.walk_in.departure_time": "حتى (الوقت)",
+  "page.walk_in.blocks": "فترات من {hours} س",
+  "page.walk_in.until": "حتى {time}"
 }

@@ -206,12 +206,14 @@ describe('the frontend performs no generic document mutation', () => {
   })
 })
 
-describe('every translation key the new code uses exists in both catalogues', () => {
+describe('every translation key the new code uses exists in every catalogue', () => {
   const en = JSON.parse(read(join(SRC, 'locales', 'en.json')))
   const ar = JSON.parse(read(join(SRC, 'locales', 'ar.json')))
+  const fr = JSON.parse(read(join(SRC, 'locales', 'fr.json')))
 
-  it('keeps the two catalogues in step', () => {
+  it('keeps the catalogues in step', () => {
     expect(Object.keys(ar)).toEqual(Object.keys(en))
+    expect(Object.keys(fr)).toEqual(Object.keys(en))
   })
 
   for (const path of files) {
@@ -228,6 +230,7 @@ describe('every translation key the new code uses exists in both catalogues', ()
       expect(used.length).toBeGreaterThan(0)
       expect(used.filter((key) => !(key in en))).toEqual([])
       expect(used.filter((key) => !(key in ar))).toEqual([])
+      expect(used.filter((key) => !(key in fr))).toEqual([])
     })
   }
 })

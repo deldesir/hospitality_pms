@@ -13,8 +13,9 @@ import { computed, reactive } from 'vue'
 
 import ar from '@/locales/ar.json'
 import en from '@/locales/en.json'
+import fr from '@/locales/fr.json'
 
-const messages = { en, ar }
+const messages = { en, ar, fr }
 
 const RTL_LOCALES = new Set(['ar', 'he', 'fa', 'ur'])
 

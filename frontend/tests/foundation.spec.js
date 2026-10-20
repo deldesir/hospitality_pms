@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 import RoomStatusBadge from '@/components/RoomStatusBadge.vue'
 import { property } from '@/stores/property'
 import { session } from '@/stores/session'
-import { direction, setLocale, t } from '@/utils/i18n'
+import { direction, setLocale, t, tCount } from '@/utils/i18n'
 
 import {
   OPERATIONAL_ROUTES,
@@ -58,6 +58,22 @@ describe('translation', () => {
 
     expect(direction.value).toBe('rtl')
     expect(t('common.actions')).not.toBe('Actions')
+  })
+
+  it('switches to French and stays LTR', () => {
+    setLocale('fr')
+
+    expect(direction.value).toBe('ltr')
+    expect(t('common.actions')).toBe('Actions')
+    expect(t('nav.rooms')).toBe('Plan des chambres')
+    expect(t('ui.table.page_status', { page: 2, pages: 5 })).toBe('Page 2 sur 5')
+  })
+
+  it('French counts one day and several days apart', () => {
+    setLocale('fr')
+
+    expect(tCount('common.audit_lag', 1)).toContain('1 jour de retard')
+    expect(tCount('common.audit_lag', 3)).toContain('3 jours de retard')
   })
 
   it('useArabic sets both the locale and the document direction', () => {

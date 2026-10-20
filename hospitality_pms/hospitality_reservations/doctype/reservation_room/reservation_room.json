@@ -15,6 +15,7 @@
   "arrival_time",
   "departure_time",
   "blocks",
+  "stay_kind",
   "property",
   "reservation_status",
   "nights",
@@ -79,6 +80,15 @@
    "label": "Hourly Blocks",
    "default": "1",
    "description": "Hourly stays: how many blocks of the plan's block hours."
+  },
+  {
+   "fieldname": "stay_kind",
+   "fieldtype": "Select",
+   "label": "Stay Kind",
+   "options": "Night\nDay Use\nHourly",
+   "default": "Night",
+   "read_only": 1,
+   "description": "What this line sells, from its rate plan: a night, a day use or hourly blocks."
   },
   {
    "description": "Denormalised from the parent reservation so availability can filter this table without joining back to Reservation. Kept in step by ReservationService.",
@@ -155,7 +165,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-10-20 06:00:00.000000",
+ "modified": "2026-10-20 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Hospitality Reservations",
  "name": "Reservation Room",

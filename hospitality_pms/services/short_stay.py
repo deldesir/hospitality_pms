@@ -7,10 +7,13 @@ date, so neither existed.
 
 The model here keeps the night engine untouched and adds a second currency of inventory:
 
-* A **short stay** is a reservation line whose departure date equals its arrival date, with
-  an arrival and a departure time on that date. Its rate plan says which kind it is: *Day
-  Use* (one price for the day's hours) or *Hourly* (a price per block of `block_hours`,
-  `blocks` of them). The line consumes **no night**: the night audit never charges it.
+* A **short stay** is a reservation line sold on a *Day Use* plan (one price for the day's
+  hours) or an *Hourly* plan (a price per block of `block_hours`, `blocks` of them). The
+  line carries that kind in `stay_kind`, copied from the plan when the line is validated,
+  and `line_kind` is the one place that says plan and dates agree: a short plan sells one
+  date, with an arrival and a departure time on it; a night plan sells a departure after the
+  arrival. The line consumes **no night**: the night audit never charges it, and a stay on
+  it cannot be extended into a night (the night is a reservation of its own).
 * Its charge is posted to the folio **at check-in** (charge types *Day Use* and *Hourly*,
   mapped by the Posting Profile like any other), and it is settled at checkout like a night.
 * **Inventory** is the room type's sellable rooms on that date, less the rooms overnight
@@ -79,6 +82,31 @@ def plan_kind(rate_plan: str | None) -> str:
 
 def is_short_plan(rate_plan: str | None) -> bool:
 	return plan_kind(rate_plan) in SHORT_KINDS
+
+
+def line_kind(rate_plan: str | None, arrival, departure) -> str:
+	"""The kind of stay a line on `rate_plan` between these dates sells, or an error.
+
+	The plan's kind and the dates must agree both ways: a day-use or hourly plan sells one
+	date and never a night, a night plan sells a departure after the arrival. Every price
+	and every reservation save passes through here, so nothing downstream has to infer the
+	kind from the dates again.
+	"""
+	kind = plan_kind(rate_plan)
+	same_day = is_same_day(arrival, departure)
+	if kind in SHORT_KINDS and not same_day:
+		throw(
+			_("Rate plan {0} sells {1}: a stay on it starts and ends on one date. Nights are sold on a night plan.").format(
+				rate_plan, _(kind)
+			),
+			exc=HospitalityPMSError,
+		)
+	if kind == NIGHT and same_day:
+		throw(
+			_("Rate plan {0} sells nights: a stay on it needs a departure date after its arrival.").format(rate_plan),
+			exc=HospitalityPMSError,
+		)
+	return kind
 
 
 def is_same_day(arrival, departure) -> bool:

@@ -204,6 +204,11 @@ def check_in(
 	# the same value back when it is unchanged, so this is a no-op beyond the checks.
 	reservation_service.assign_room(reservation, room_line, room, allow_unready=allow_unready_room)
 
+	# The line says what it sells (written from its rate plan when the reservation was
+	# validated): a night, a day use or hourly blocks. The stay copies it, and the charge
+	# below reads it; nothing here infers the kind from the dates.
+	kind = line.get("stay_kind") or short_stay.NIGHT
+
 	# Every precondition above has now passed, so this is the one moment at
 	# which a Stay may legitimately come into existence. The context is opened
 	# around the insert alone: an unrelated save later in this request must not
@@ -221,7 +226,7 @@ def check_in(
 			"arrival_date": line.arrival_date,
 			"departure_date": line.departure_date,
 			"nights": len(stay_nights(line.arrival_date, line.departure_date)),
-			"stay_kind": short_stay.plan_kind(line.rate_plan) if getdate(line.arrival_date) == getdate(line.departure_date) else short_stay.NIGHT,
+			"stay_kind": kind,
 			"arrival_time": line.get("arrival_time"),
 			"departure_time": line.get("departure_time"),
 			"blocks": line.get("blocks") or 0,
@@ -273,10 +278,9 @@ def check_in(
 		update_modified=True,
 	)
 
-	if getdate(line.arrival_date) == getdate(line.departure_date):
+	if kind != short_stay.NIGHT:
 		# A day-use or hourly stay consumes no night, so the night audit never charges it:
 		# the room is charged now, once, at the rate the booking was sold for.
-		kind = short_stay.plan_kind(line.rate_plan)
 		folio_service.post_charge(
 			folio,
 			short_stay.charge_type_for(kind),
@@ -727,6 +731,17 @@ def extend_stay(
 	if doc.stay_status not in (IN_HOUSE, DUE_OUT):
 		throw(
 			_("Only an in-house stay can be extended; this stay is {0}.").format(_(doc.stay_status)),
+			exc=InvalidStateTransitionError,
+		)
+
+	# A day-use or hourly stay was charged in full at check-in and holds no night. Moving
+	# its departure would keep that charge, give the line nights, and have the audit post
+	# tonight at the day price: a night is a reservation of its own, on a night plan.
+	if (doc.get("stay_kind") or short_stay.NIGHT) != short_stay.NIGHT:
+		throw(
+			_("A {0} stay ends on its own day and cannot be extended into a night: book the night as a new reservation.").format(
+				_(doc.stay_kind)
+			),
 			exc=InvalidStateTransitionError,
 		)
 

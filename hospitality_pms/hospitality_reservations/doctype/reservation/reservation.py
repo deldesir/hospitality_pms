@@ -164,18 +164,12 @@ class Reservation(Document):
 
 	def _validate_dates(self):
 		"""SAS 3.4 mandatory control: arrival < departure, at both levels."""
+		from hospitality_pms.services import short_stay
+
 		self._derive_dates_from_room_lines()
 
-		same_day = getdate(self.arrival_date) == getdate(self.departure_date)
-		if getdate(self.arrival_date) > getdate(self.departure_date) or (same_day and not self._is_short_stay()):
-			frappe.throw(
-				_("Arrival date {0} must be before departure date {1}.").format(
-					self.arrival_date, self.departure_date
-				),
-				exc=HospitalityPMSError,
-			)
-
-		self.nights = len(stay_nights(self.arrival_date, self.departure_date))
+		if getdate(self.arrival_date) > getdate(self.departure_date):
+			self._throw_dates()
 
 		for line in self.rooms:
 			line.arrival_date = line.arrival_date or self.arrival_date
@@ -193,14 +187,33 @@ class Reservation(Document):
 					exc=HospitalityPMSError,
 				)
 
+			# The line's kind is a stored fact, written from its plan here and read by check-in
+			# and the stay: a short plan on a line with nights, or a night plan on a same-day
+			# line, is refused in `line_kind` rather than inferred again downstream.
+			plan = line.rate_plan or self.rate_plan
+			line.stay_kind = short_stay.line_kind(plan, line.arrival_date, line.departure_date) if plan else short_stay.NIGHT
+
+		same_day = getdate(self.arrival_date) == getdate(self.departure_date)
+		if same_day and not self._is_short_stay():
+			self._throw_dates()
+
+		self.nights = len(stay_nights(self.arrival_date, self.departure_date))
+
+	def _throw_dates(self):
+		frappe.throw(
+			_("Arrival date {0} must be before departure date {1}.").format(self.arrival_date, self.departure_date),
+			exc=HospitalityPMSError,
+		)
+
 	def _is_short_stay(self) -> bool:
 		"""A same-day booking is a day-use or hourly stay when every room line sells on such a
-		plan; the lines then carry the hours the room is held (resolved from the plan here, so
-		pricing and availability see them)."""
+		plan (its `stay_kind`, just written from the plan); the lines then carry the hours the
+		room is held (resolved from the plan here, so pricing and availability see them)."""
 		from hospitality_pms.services import short_stay
 
-		plans = [line.rate_plan or self.rate_plan for line in self.rooms] or [self.rate_plan]
-		if not all(plans) or not all(short_stay.is_short_plan(plan) for plan in plans):
+		if not self.rooms:
+			return bool(self.rate_plan) and short_stay.is_short_plan(self.rate_plan)
+		if not all((line.stay_kind or short_stay.NIGHT) in short_stay.SHORT_KINDS for line in self.rooms):
 			return False
 		for line in self.rooms:
 			short_stay.apply_window(line, line.rate_plan or self.rate_plan)

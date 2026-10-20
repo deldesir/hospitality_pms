@@ -8,3 +8,4 @@ hospitality_pms.patches.v1_0.rename_doctypes_to_commercial_names
 hospitality_pms.patches.v16_6.add_folio_idempotency_uniqueness
 hospitality_pms.patches.v16_6.add_night_audit_uniqueness
 hospitality_pms.patches.v16_7.repair_erp_permission_clobber
+hospitality_pms.patches.v16_7.backfill_line_stay_kind

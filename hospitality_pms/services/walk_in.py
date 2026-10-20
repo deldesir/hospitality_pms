@@ -102,12 +102,14 @@ def _assert_stay_dates(arrival, departure):
 	Checked before the reservation is built so a mistyped departure costs a
 	message rather than an insert, a price lookup and a rollback.
 	"""
-	if getdate(departure) <= getdate(arrival):
+	if getdate(departure) < getdate(arrival):
 		throw(
-			_("Departure {0} must be after the arrival date {1}.").format(
+			_("Departure {0} must not be before the arrival date {1}.").format(
 				getdate(departure), getdate(arrival)
 			)
 		)
+	# a departure on the arrival date is a day-use or hourly stay: the reservation controller
+	# accepts it only on such a rate plan, with its hours
 
 
 def _assert_room_matches(property_name: str, room: str, room_type: str):
@@ -156,6 +158,9 @@ def create_walk_in(
 	allow_unready_room: bool = False,
 	readiness_reason: str | None = None,
 	special_requests: str | None = None,
+	arrival_time=None,
+	departure_time=None,
+	blocks: int = 1,
 ) -> dict:
 	"""Book and check in a guest who is standing at the desk.
 
@@ -227,6 +232,9 @@ def create_walk_in(
 						"children": children,
 						"rate_plan": rate_plan,
 						"special_requests": special_requests,
+						"arrival_time": arrival_time,
+						"departure_time": departure_time,
+						"blocks": max(int(blocks or 1), 1),
 					}
 				],
 			}

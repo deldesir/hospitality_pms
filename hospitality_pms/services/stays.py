@@ -14,6 +14,8 @@ from frappe import _
 from frappe.utils import add_days, flt, getdate, now_datetime
 
 from hospitality_pms.services import folio as folio_service
+from hospitality_pms.services import short_stay
+from hospitality_pms.services.availability import stay_nights
 from hospitality_pms.services import reservations as reservation_service
 from hospitality_pms.services import rooms as room_service
 from hospitality_pms.services.availability import (
@@ -218,7 +220,11 @@ def check_in(
 			"room_type": line.room_type,
 			"arrival_date": line.arrival_date,
 			"departure_date": line.departure_date,
-			"nights": len(nights_between(line.arrival_date, line.departure_date)),
+			"nights": len(stay_nights(line.arrival_date, line.departure_date)),
+			"stay_kind": short_stay.plan_kind(line.rate_plan) if getdate(line.arrival_date) == getdate(line.departure_date) else short_stay.NIGHT,
+			"arrival_time": line.get("arrival_time"),
+			"departure_time": line.get("departure_time"),
+			"blocks": line.get("blocks") or 0,
 			"adults": line.adults,
 			"children": line.children,
 			"extra_beds": line.extra_beds,
@@ -266,6 +272,22 @@ def check_in(
 		},
 		update_modified=True,
 	)
+
+	if getdate(line.arrival_date) == getdate(line.departure_date):
+		# A day-use or hourly stay consumes no night, so the night audit never charges it:
+		# the room is charged now, once, at the rate the booking was sold for.
+		kind = short_stay.plan_kind(line.rate_plan)
+		folio_service.post_charge(
+			folio,
+			short_stay.charge_type_for(kind),
+			_("{0}: room {1} on {2}, {3} to {4}").format(
+				_(kind), room, line.arrival_date, str(line.arrival_time or "")[:5], str(line.departure_time or "")[:5]
+			),
+			flt(line.room_rate),
+			idempotency_key=f"short-stay:{stay.name}",
+			reference_doctype=STAY_DOCTYPE,
+			reference_name=stay.name,
+		)
 
 	room_service.mark_occupied(
 		room, reference_doctype=STAY_DOCTYPE, reference_name=stay.name

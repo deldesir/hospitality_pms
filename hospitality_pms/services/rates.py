@@ -380,6 +380,9 @@ def get_rate_breakdown(
 	extra_beds: int = 0,
 	rooms: int = 1,
 	check_restrictions: bool = True,
+	arrival_time=None,
+	departure_time=None,
+	blocks: int = 1,
 ) -> dict:
 	"""The per-night breakdown for one room of `room_type`.
 
@@ -388,6 +391,23 @@ def get_rate_breakdown(
 	same type on the same dates prices identically.
 	"""
 	rate_plan = resolve_rate_plan(property_name, room_type, arrival, rate_plan)
+	if getdate(arrival) == getdate(departure):
+		# a day-use or hourly stay: priced by its plan's day or blocks, never by nights
+		from hospitality_pms.services.short_stay import short_breakdown
+
+		return short_breakdown(
+			property_name,
+			room_type,
+			arrival,
+			rate_plan,
+			arrival_time=arrival_time,
+			departure_time=departure_time,
+			blocks=blocks,
+			adults=adults,
+			children=children,
+			extra_beds=extra_beds,
+			rooms=rooms,
+		)
 
 	if check_restrictions:
 		validate_restrictions(property_name, room_type, arrival, departure, rate_plan)

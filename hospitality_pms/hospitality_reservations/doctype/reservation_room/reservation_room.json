@@ -3,7 +3,7 @@
  "allow_bulk_edit": 1,
  "allow_rename": 1,
  "creation": "2026-08-08 16:21:10.650629",
- "description": "One room-type line of a reservation: the dates, quantity and rate for a block of rooms of one room type. This is the line the availability engine reads to know what inventory is already committed \u2014 see hospitality_pms.services.availability._sold_by_night.",
+ "description": "One room-type line of a reservation: the dates, quantity and rate for a block of rooms of one room type. This is the line the availability engine reads to know what inventory is already committed — see hospitality_pms.services.availability._sold_by_night.",
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
@@ -12,6 +12,9 @@
   "rooms",
   "arrival_date",
   "departure_date",
+  "arrival_time",
+  "departure_time",
+  "blocks",
   "property",
   "reservation_status",
   "nights",
@@ -58,6 +61,24 @@
    "label": "Departure Date",
    "reqd": 1,
    "search_index": 1
+  },
+  {
+   "fieldname": "arrival_time",
+   "fieldtype": "Time",
+   "label": "Arrival Time",
+   "description": "Day-use and hourly stays: the hours the room is held on the arrival date."
+  },
+  {
+   "fieldname": "departure_time",
+   "fieldtype": "Time",
+   "label": "Departure Time"
+  },
+  {
+   "fieldname": "blocks",
+   "fieldtype": "Int",
+   "label": "Hourly Blocks",
+   "default": "1",
+   "description": "Hourly stays: how many blocks of the plan's block hours."
   },
   {
    "description": "Denormalised from the parent reservation so availability can filter this table without joining back to Reservation. Kept in step by ReservationService.",
@@ -134,7 +155,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-08-08 16:29:29.246563",
+ "modified": "2026-10-20 06:00:00.000000",
  "modified_by": "Administrator",
  "module": "Hospitality Reservations",
  "name": "Reservation Room",

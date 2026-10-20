@@ -26,6 +26,10 @@
   "stay_dates_section",
   "arrival_date",
   "departure_date",
+  "stay_kind",
+  "arrival_time",
+  "departure_time",
+  "blocks",
   "stay_dates_col",
   "nights",
   "checkin_section",
@@ -196,6 +200,33 @@
    "label": "Departure Date",
    "reqd": 1,
    "search_index": 1
+  },
+  {
+   "fieldname": "stay_kind",
+   "fieldtype": "Select",
+   "label": "Stay Kind",
+   "options": "Night\nDay Use\nHourly",
+   "default": "Night",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "arrival_time",
+   "fieldtype": "Time",
+   "label": "Arrival Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "departure_time",
+   "fieldtype": "Time",
+   "label": "Departure Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "blocks",
+   "fieldtype": "Int",
+   "label": "Hourly Blocks",
+   "read_only": 1
   },
   {
    "fieldname": "stay_dates_col",
@@ -407,7 +438,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-08-08 17:19:01.217449",
+ "modified": "2026-10-20 06:00:00.000000",
  "modified_by": "Administrator",
  "module": "Hospitality Front Office",
  "name": "Stay",

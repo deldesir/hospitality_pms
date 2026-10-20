@@ -40,6 +40,7 @@ from hospitality_pms.services.base import (
 	require_role,
 	transaction,
 )
+from hospitality_pms.services.availability import stay_nights
 from hospitality_pms.services.exceptions import (
 	InvalidStateTransitionError,
 	HospitalityPMSError,
@@ -160,7 +161,14 @@ def price_reservation(doc, *, check_restrictions: bool = True) -> dict:
 			extra_beds=line.extra_beds,
 			rooms=line.rooms,
 			check_restrictions=check_restrictions,
+			arrival_time=line.get("arrival_time"),
+			departure_time=line.get("departure_time"),
+			blocks=line.get("blocks") or 1,
 		)
+		if breakdown.get("stay_kind"):          # a short stay: keep the hours the price was made for
+			line.arrival_time = breakdown["arrival_time"]
+			line.departure_time = breakdown["departure_time"]
+			line.blocks = breakdown["blocks"]
 
 		line.rate_plan = breakdown["rate_plan"]
 		line.nights = breakdown["nights"]
@@ -196,7 +204,11 @@ def sync_room_lines(doc):
 		line.reservation_status = doc.reservation_status
 		line.arrival_date = line.arrival_date or doc.arrival_date
 		line.departure_date = line.departure_date or doc.departure_date
-		line.nights = len(nights_between(line.arrival_date, line.departure_date))
+		line.nights = len(stay_nights(line.arrival_date, line.departure_date))
+		if not line.get("arrival_time") and doc.get("arrival_time"):
+			line.arrival_time = doc.arrival_time
+		if not line.get("departure_time") and doc.get("departure_time"):
+			line.departure_time = doc.departure_time
 		line.rooms = max(int(line.rooms or 1), 1)
 
 
@@ -853,7 +865,14 @@ def assign_room(reservation: str, room_line: str, room: str, *, allow_unready: b
 			_("Room {0} is a {1}, but this line is for {2}.").format(room, room_type, line.room_type),
 		)
 
-	_assert_room_free(room, line.arrival_date, line.departure_date, exclude_line=room_line)
+	_assert_room_free(
+		room,
+		line.arrival_date,
+		line.departure_date,
+		exclude_line=room_line,
+		arrival_time=line.get("arrival_time"),
+		departure_time=line.get("departure_time"),
+	)
 	assert_assignable(room, allow_unready_housekeeping=allow_unready, arrival=line.arrival_date)
 
 	# And whether anybody is actually *in* it, which neither of the two lines
@@ -901,7 +920,14 @@ def assign_room(reservation: str, room_line: str, room: str, *, allow_unready: b
 
 
 def _assert_room_free(
-	room: str, arrival, departure, exclude_line: str | None = None, *, remedy: str | None = None
+	room: str,
+	arrival,
+	departure,
+	exclude_line: str | None = None,
+	*,
+	remedy: str | None = None,
+	arrival_time=None,
+	departure_time=None,
 ):
 	"""Refuse a room already promised to an overlapping stay.
 
@@ -940,6 +966,24 @@ def _assert_room_free(
 	# both agents find the room free and both take it. This is the N1 pattern
 	# Wave 1 established, applied to the assignment interval.
 	clash = lock_and_find("Reservation Room", filters, ["parent", "name"])
+	if not clash:
+		# the hours of a day-use or hourly stay, on this day or on one of this stay's days
+		from hospitality_pms.services.short_stay import clashing_rooms
+
+		property_name = frappe.db.get_value("Hotel Room", room, "property")
+		if room in clashing_rooms(
+			property_name,
+			arrival,
+			departure,
+			arrival_time=arrival_time,
+			departure_time=departure_time,
+			exclude_line=exclude_line,
+			current=True,
+		):
+			throw(
+				_("Room {0} is held by another stay during these hours. {1}").format(room, remedy or "").strip(),
+				exc=HospitalityPMSError,
+			)
 
 	if clash:
 		# Two whole templates rather than one message with a sentence appended to

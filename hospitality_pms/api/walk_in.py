@@ -51,6 +51,9 @@ def create_walk_in(
 	allow_unready_room: int = 0,
 	readiness_reason: str | None = None,
 	special_requests: str | None = None,
+	arrival_time: str | None = None,
+	departure_time: str | None = None,
+	blocks: int = 1,
 ) -> dict:
 	"""Book and check in a guest standing at the desk, in one operation.
 
@@ -74,4 +77,7 @@ def create_walk_in(
 		allow_unready_room=clean_bool(allow_unready_room),
 		readiness_reason=clean_str(readiness_reason),
 		special_requests=clean_str(special_requests),
+		arrival_time=clean_str(arrival_time),
+		departure_time=clean_str(departure_time),
+		blocks=clean_int(blocks, 1),
 	)

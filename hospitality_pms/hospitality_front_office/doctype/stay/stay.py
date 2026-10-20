@@ -6,7 +6,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import getdate, now_datetime
 
-from hospitality_pms.services.availability import nights_between
+from hospitality_pms.services.availability import nights_between, stay_nights
 from hospitality_pms.services.base import (
 	STAY_ORCHESTRATION,
 	assert_service_context,
@@ -99,7 +99,10 @@ class Stay(Document):
 	# ------------------------------------------------------------------
 
 	def _validate_dates(self):
-		if getdate(self.arrival_date) >= getdate(self.departure_date):
+		same_day = getdate(self.arrival_date) == getdate(self.departure_date)
+		if getdate(self.arrival_date) > getdate(self.departure_date) or (
+			same_day and (self.stay_kind or "Night") == "Night"
+		):   # a day-use or hourly stay lives on its one date
 			frappe.throw(
 				_("Arrival date {0} must be before departure date {1}.").format(
 					self.arrival_date, self.departure_date
@@ -107,7 +110,7 @@ class Stay(Document):
 				exc=HospitalityPMSError,
 			)
 
-		self.nights = len(nights_between(self.arrival_date, self.departure_date))
+		self.nights = len(stay_nights(self.arrival_date, self.departure_date))
 
 	# ------------------------------------------------------------------
 	# Room

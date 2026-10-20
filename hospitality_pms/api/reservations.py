@@ -151,6 +151,9 @@ def quote(
 	children: int = 0,
 	extra_beds: int = 0,
 	rooms: int = 1,
+	arrival_time: str | None = None,
+	departure_time: str | None = None,
+	blocks: int = 1,
 ) -> dict:
 	"""Price a stay without creating anything.
 
@@ -170,6 +173,9 @@ def quote(
 		children=int(children or 0),
 		extra_beds=int(extra_beds or 0),
 		rooms=int(rooms or 1),
+		arrival_time=arrival_time or None,
+		departure_time=departure_time or None,
+		blocks=int(blocks or 1),
 	)
 
 

@@ -99,6 +99,29 @@
             :label="t('page.reservation_new.rate_plan')"
             :options="ratePlanOptions"
           />
+
+          <div v-if="form.room_type && shortKind" class="space-y-2 rounded border border-outline-gray-1 p-3">
+            <p class="text-p-sm text-ink-gray-7">{{ t('page.reservation_new.short_stay_note', { kind: shortKind }) }}</p>
+            <div class="grid gap-3 sm:grid-cols-3">
+              <FormControl v-model="form.arrival_time" type="time" :label="t('page.reservation_new.arrival_time')" />
+              <FormControl
+                v-if="shortKind === 'Day Use'"
+                v-model="form.departure_time"
+                type="time"
+                :label="t('page.reservation_new.departure_time')"
+              />
+              <FormControl
+                v-else
+                v-model.number="form.blocks"
+                type="number"
+                min="1"
+                :label="t('page.reservation_new.blocks', { hours: selectedPlan?.block_hours })"
+              />
+              <p v-if="quote.data?.departure_time" class="self-end text-p-sm text-ink-gray-6">
+                {{ t('page.reservation_new.until', { time: hhmm(quote.data.departure_time) }) }}
+              </p>
+            </div>
+          </div>
         </div>
 
         <div v-if="quote.loading" class="rounded border border-outline-gray-1 p-4">
@@ -192,7 +215,9 @@ const search = availabilitySearchResource()
 const quote = quoteResource()
 const guestSearch = searchGuestsResource()
 const createReservation = createReservationResource()
-const ratePlans = listResource('Rate Plan', { fields: ['name', 'rate_plan_name'] })
+const ratePlans = listResource('Rate Plan', {
+  fields: ['name', 'rate_plan_name', 'stay_kind', 'block_hours', 'day_use_from', 'day_use_until'],
+})
 
 // The property's operating day, not the browser's - see Availability.vue.
 let derived = defaultStayRange(property.businessDate.value)
@@ -211,6 +236,9 @@ const form = reactive({
   children: 0,
   room_type: '',
   rate_plan: '',
+  arrival_time: '',
+  departure_time: '',
+  blocks: 1,
   guest_name: '',
   guest_email: '',
   guest_mobile: '',
@@ -240,6 +268,17 @@ const ratePlanOptions = computed(() => [
   ...(ratePlans.data || []).map((row) => ({ label: row.rate_plan_name || row.name, value: row.name })),
 ])
 
+// A day-use or hourly plan makes the booking a same-day stay with hours instead of nights.
+const selectedPlan = computed(() => (ratePlans.data || []).find((row) => row.name === form.rate_plan) || null)
+const shortKind = computed(() =>
+  selectedPlan.value?.stay_kind && selectedPlan.value.stay_kind !== 'Night' ? selectedPlan.value.stay_kind : '',
+)
+// Frappe serialises a Time as 'H:MM:SS' without a leading zero; an <input type=time> wants 'HH:MM'.
+const hhmm = (value) => {
+  if (!value) return ''
+  const [h, m] = String(value).split(':')
+  return `${String(h).padStart(2, '0')}:${String(m || '00').padStart(2, '0')}`
+}
 const guestOptions = computed(() =>
   (guestSearch.data || []).map((g) => ({
     label: g.guest_name,
@@ -289,17 +328,33 @@ function runQuote() {
     property: property.activeName.value,
     room_type: form.room_type,
     arrival: form.arrival,
-    departure: form.departure,
+    departure: shortKind.value ? form.arrival : form.departure,
     rate_plan: form.rate_plan || undefined,
     adults: form.adults,
     children: form.children,
     rooms: form.rooms,
+    arrival_time: shortKind.value ? form.arrival_time || undefined : undefined,
+    departure_time: shortKind.value === 'Day Use' ? form.departure_time || undefined : undefined,
+    blocks: shortKind.value === 'Hourly' ? form.blocks || 1 : undefined,
   })
 }
 
 watch(() => form.rate_plan, () => {
+  if (shortKind.value) {
+    form.departure = form.arrival
+    if (shortKind.value === 'Day Use') {
+      form.arrival_time = form.arrival_time || hhmm(selectedPlan.value.day_use_from)
+      form.departure_time = form.departure_time || hhmm(selectedPlan.value.day_use_until)
+    }
+  }
   if (form.room_type) runQuote()
 })
+watch(
+  () => [form.arrival_time, form.departure_time, form.blocks],
+  () => {
+    if (shortKind.value && form.room_type) runQuote()
+  },
+)
 
 // Re-derive once the property context lands, unless the agent has already
 // chosen dates of their own.
@@ -332,7 +387,9 @@ async function save(status) {
     reservation_type: form.reservation_type,
     reservation_status: status,
     arrival_date: form.arrival,
-    departure_date: form.departure,
+    departure_date: shortKind.value ? form.arrival : form.departure,
+    arrival_time: shortKind.value ? form.arrival_time || undefined : undefined,
+    departure_time: shortKind.value === 'Day Use' ? form.departure_time || undefined : undefined,
     booking_source: form.booking_source.trim() || undefined,
     special_requests: form.special_requests.trim() || undefined,
     guest_email: form.guest_email.trim() || undefined,
@@ -342,7 +399,10 @@ async function save(status) {
         room_type: form.room_type,
         rooms: form.rooms,
         arrival_date: form.arrival,
-        departure_date: form.departure,
+        departure_date: shortKind.value ? form.arrival : form.departure,
+        arrival_time: shortKind.value ? form.arrival_time || undefined : undefined,
+        departure_time: shortKind.value === 'Day Use' ? form.departure_time || undefined : undefined,
+        blocks: shortKind.value === 'Hourly' ? form.blocks || 1 : undefined,
         adults: form.adults,
         children: form.children,
         rate_plan: form.rate_plan || undefined,

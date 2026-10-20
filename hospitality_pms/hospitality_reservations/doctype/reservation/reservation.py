@@ -6,7 +6,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import flt, getdate, now_datetime
 
-from hospitality_pms.services.availability import nights_between
+from hospitality_pms.services.availability import nights_between, stay_nights
 from hospitality_pms.services.exceptions import (
 	ConfigurationError,
 	HospitalityPMSError,
@@ -166,7 +166,8 @@ class Reservation(Document):
 		"""SAS 3.4 mandatory control: arrival < departure, at both levels."""
 		self._derive_dates_from_room_lines()
 
-		if getdate(self.arrival_date) >= getdate(self.departure_date):
+		same_day = getdate(self.arrival_date) == getdate(self.departure_date)
+		if getdate(self.arrival_date) > getdate(self.departure_date) or (same_day and not self._is_short_stay()):
 			frappe.throw(
 				_("Arrival date {0} must be before departure date {1}.").format(
 					self.arrival_date, self.departure_date
@@ -174,7 +175,7 @@ class Reservation(Document):
 				exc=HospitalityPMSError,
 			)
 
-		self.nights = len(nights_between(self.arrival_date, self.departure_date))
+		self.nights = len(stay_nights(self.arrival_date, self.departure_date))
 
 		for line in self.rooms:
 			line.arrival_date = line.arrival_date or self.arrival_date
@@ -191,6 +192,22 @@ class Reservation(Document):
 					),
 					exc=HospitalityPMSError,
 				)
+
+	def _is_short_stay(self) -> bool:
+		"""A same-day booking is a day-use or hourly stay when every room line sells on such a
+		plan; the lines then carry the hours the room is held (resolved from the plan here, so
+		pricing and availability see them)."""
+		from hospitality_pms.services import short_stay
+
+		plans = [line.rate_plan or self.rate_plan for line in self.rooms] or [self.rate_plan]
+		if not all(plans) or not all(short_stay.is_short_plan(plan) for plan in plans):
+			return False
+		for line in self.rooms:
+			short_stay.apply_window(line, line.rate_plan or self.rate_plan)
+		if self.rooms:
+			self.arrival_time = self.arrival_time or self.rooms[0].arrival_time
+			self.departure_time = self.departure_time or self.rooms[0].departure_time
+		return True
 
 	def _derive_dates_from_room_lines(self):
 		"""The header summarises its rooms; it does not constrain them.

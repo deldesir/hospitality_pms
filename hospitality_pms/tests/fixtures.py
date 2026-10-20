@@ -315,8 +315,8 @@ class Fixtures:
 
 		return names
 
-	def rate_plan(self, property_name: str, room_type: str, *, base_rate: float = 100.0) -> str:
-		name = f"{property_name}-RP"
+	def rate_plan(self, property_name: str, room_type: str, *, base_rate: float = 100.0, code: str = "RP", **overrides) -> str:
+		name = f"{property_name}-{code}"
 
 		if not frappe.db.exists("Rate Plan", name):
 			doc = frappe.get_doc(
@@ -329,6 +329,7 @@ class Fixtures:
 					"valid_from": add_days(nowdate(), -365),
 					"is_active": 1,
 					"room_types": [{"room_type": room_type, "base_rate": base_rate, "is_active": 1}],
+					**overrides,
 				}
 			)
 			doc.insert(ignore_permissions=True)

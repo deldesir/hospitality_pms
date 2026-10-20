@@ -17,6 +17,10 @@
   "display_order",
   "type_section",
   "rate_type",
+  "stay_kind",
+  "block_hours",
+  "day_use_from",
+  "day_use_until",
   "validity_section",
   "valid_from",
   "validity_col",
@@ -108,6 +112,37 @@
    "reqd": 1
   },
   {
+   "fieldname": "stay_kind",
+   "fieldtype": "Select",
+   "label": "Stay Kind",
+   "options": "Night\nDay Use\nHourly",
+   "default": "Night",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "Night: sold per night, charged by the night audit. Day Use: a room for part of one day, charged at check-in. Hourly: blocks of hours on one day, charged at check-in."
+  },
+  {
+   "fieldname": "block_hours",
+   "fieldtype": "Int",
+   "label": "Block Hours",
+   "depends_on": "eval:doc.stay_kind=='Hourly'",
+   "mandatory_depends_on": "eval:doc.stay_kind=='Hourly'",
+   "description": "Length of one hourly block; the room type's base rate is the price of one block."
+  },
+  {
+   "fieldname": "day_use_from",
+   "fieldtype": "Time",
+   "label": "Day Use From",
+   "depends_on": "eval:doc.stay_kind=='Day Use'",
+   "description": "Default hours of a day-use stay; a booking may narrow them."
+  },
+  {
+   "fieldname": "day_use_until",
+   "fieldtype": "Time",
+   "label": "Day Use Until",
+   "depends_on": "eval:doc.stay_kind=='Day Use'"
+  },
+  {
    "fieldname": "validity_section",
    "fieldtype": "Section Break",
    "label": "Validity"
@@ -160,7 +195,7 @@
   },
   {
    "default": "0",
-   "description": "Warning: a tax-inclusive plan is not stored net of tax. The charge service unpacks the tax portion out of this plan's rate at posting time \u2014 the rate on this plan and on its Daily Rate rows is always the gross, tax-inclusive figure.",
+   "description": "Warning: a tax-inclusive plan is not stored net of tax. The charge service unpacks the tax portion out of this plan's rate at posting time — the rate on this plan and on its Daily Rate rows is always the gross, tax-inclusive figure.",
    "fieldname": "includes_taxes",
    "fieldtype": "Check",
    "label": "Includes Taxes"
@@ -242,7 +277,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-08-08 17:18:58.628500",
+ "modified": "2026-10-20 06:00:00.000000",
  "modified_by": "Administrator",
  "module": "Hospitality Rates",
  "name": "Rate Plan",

@@ -115,6 +115,70 @@ def nights_between(arrival, departure) -> list:
 # ---------------------------------------------------------------------------
 
 
+def stay_nights(arrival, departure) -> list:
+	"""The nights a stay consumes: none for a same-day (day-use or hourly) stay, which holds a
+	room for hours of one date instead and is counted by `services.short_stay`."""
+	if getdate(arrival) == getdate(departure):
+		return []
+	return nights_between(arrival, departure)
+
+
+def short_lines_on(
+	property_name: str,
+	date,
+	room_type: str | None = None,
+	*,
+	exclude_reservation: str | None = None,
+	exclude_line: str | None = None,
+	current: bool = False,
+) -> list:
+	"""Holding same-day reservation lines on `date`: the day-use and hourly stays."""
+	if not frappe.db.table_exists(RESERVATION_ROOM_DOCTYPE) or not frappe.db.has_column(RESERVATION_ROOM_DOCTYPE, "arrival_time"):
+		return []
+	date = getdate(date)
+	filters = {
+		"property": property_name,
+		"reservation_status": ("in", HOLDING_RESERVATION_STATES),
+		"arrival_date": date,
+		"departure_date": date,
+	}
+	if room_type:
+		filters["room_type"] = room_type
+	if exclude_reservation:
+		filters["parent"] = ("!=", exclude_reservation)
+	if exclude_line:
+		filters["name"] = ("!=", exclude_line)
+	fields = ["name", "parent", "room_type", "rooms", "arrival_time", "departure_time", "assigned_room"]
+	if current:
+		return frappe.db.get_values(RESERVATION_ROOM_DOCTYPE, filters, fields, as_dict=True, order_by=None, for_update=True) or []
+	return frappe.get_all(RESERVATION_ROOM_DOCTYPE, filters=filters, fields=fields, limit_page_length=0)
+
+
+def _minutes(value) -> int | None:
+	if value in (None, ""):
+		return None
+	if isinstance(value, timedelta):
+		return int(value.total_seconds() // 60)
+	if hasattr(value, "hour"):
+		return value.hour * 60 + value.minute
+	parts = str(value).split(":")
+	return int(parts[0]) * 60 + int(parts[1]) if len(parts) >= 2 else None
+
+
+def _short_held_by_night(property_name: str, nights: list, room_type, exclude_reservation, current) -> dict:
+	"""Rooms short stays hold against overnight arrivals, per night: those whose hours run
+	past the property's check-in time on that date."""
+	held = defaultdict(lambda: defaultdict(int))
+	if not nights:
+		return held
+	check_in = _minutes(get_property(property_name).check_in_time) or 14 * 60
+	for night in nights:
+		for row in short_lines_on(property_name, night, room_type, exclude_reservation=exclude_reservation, current=current):
+			if (_minutes(row.departure_time) or 24 * 60) > check_in:
+				held[night][row.room_type] += int(row.rooms or 1)
+	return held
+
+
 def _physical_rooms(property_name: str, room_type: str | None = None) -> list[dict]:
 	"""Active rooms and their current blocking state."""
 	filters = {"property": property_name, "is_active": 1}
@@ -255,7 +319,7 @@ def _sold_by_night(
 	sold = defaultdict(lambda: defaultdict(int))
 
 	for row in rows:
-		for night in nights_between(row["arrival_date"], row["departure_date"]):
+		for night in stay_nights(row["arrival_date"], row["departure_date"]):
 			if night in nights:
 				sold[night][row["room_type"]] += int(row.get("rooms") or 1)
 
@@ -305,6 +369,7 @@ def get_availability(
 	blocks = _blocks(property_name, arrival, departure, room_type)
 	rooms_blocked, quantity_blocked = _blocked_by_night(blocks, nights, rooms_by_name)
 	sold = _sold_by_night(property_name, nights, room_type, exclude_reservation, current=current)
+	short_held = _short_held_by_night(property_name, nights, room_type, exclude_reservation, current)
 
 	overbooking = int(get_property(property_name).overbooking_limit or 0)
 
@@ -329,7 +394,7 @@ def get_availability(
 
 			blocked_count = len(bucket["sellable_rooms"]) - len(sellable)
 			quantity = quantity_blocked.get(night, {}).get(type_name, 0)
-			sold_count = sold.get(night, {}).get(type_name, 0)
+			sold_count = sold.get(night, {}).get(type_name, 0) + short_held.get(night, {}).get(type_name, 0)
 
 			available = len(sellable) - quantity - sold_count
 
@@ -521,13 +586,34 @@ def check_demand(
 	expects, so the Wave-1 override audit keeps working unchanged.
 	"""
 	demand: dict[str, dict] = defaultdict(lambda: defaultdict(int))
+	short_lines = []
 
 	for line in lines:
+		if getdate(line.arrival_date) == getdate(line.departure_date):
+			short_lines.append(line)      # a day-use or hourly line: its own day slot, below
+			continue
 		for night in nights_between(line.arrival_date, line.departure_date):
 			demand[line.room_type][night] += max(int(line.rooms or 1), 1)
 
 	limit_key = "available_with_overbooking" if allow_overbooking else "available"
 	checks = []
+	if short_lines:
+		from hospitality_pms.services.short_stay import check_short_availability, minutes
+
+		for line in short_lines:
+			checks.append(
+				check_short_availability(
+					property_name,
+					line.room_type,
+					line.arrival_date,
+					minutes(line.arrival_time) or 0,
+					minutes(line.departure_time) or 24 * 60,
+					line.rooms,
+					exclude_reservation=exclude_reservation,
+					exclude_line=line.name,
+					current=current,
+				)
+			)
 
 	for room_type, per_night in demand.items():
 		nights = sorted(per_night)
@@ -588,7 +674,9 @@ def lock_room_type(property_name: str, room_types) -> list[str]:
 	return lock_documents(ROOM_TYPE_DOCTYPE, room_types)
 
 
-def _promised_rooms(property_name: str, arrival, departure, *, exclude_line: str | None = None) -> set[str]:
+def _promised_rooms(
+	property_name: str, arrival, departure, *, exclude_line: str | None = None, arrival_time=None, departure_time=None
+) -> set[str]:
 	"""Rooms already given to a holding reservation line overlapping this interval.
 
 	Overlap is `arrival < other.departure AND departure > other.arrival`, the
@@ -606,7 +694,12 @@ def _promised_rooms(property_name: str, arrival, departure, *, exclude_line: str
 	if exclude_line:
 		filters["name"] = ("!=", exclude_line)
 
-	return set(frappe.get_all("Reservation Room", filters=filters, pluck="assigned_room"))
+	promised = set(frappe.get_all("Reservation Room", filters=filters, pluck="assigned_room"))
+	from hospitality_pms.services.short_stay import clashing_rooms
+
+	return promised | clashing_rooms(
+		property_name, arrival, departure, arrival_time=arrival_time, departure_time=departure_time, exclude_line=exclude_line
+	)
 
 
 def get_assignable_rooms(
@@ -618,6 +711,8 @@ def get_assignable_rooms(
 	allow_unready_housekeeping: bool = False,
 	exclude_line: str | None = None,
 	exclude_stay: str | None = None,
+	arrival_time=None,
+	departure_time=None,
 ) -> list[dict]:
 	"""Specific rooms that can be assigned for the whole stay.
 
@@ -647,9 +742,11 @@ def get_assignable_rooms(
 		rooms_with_active_stays,
 	)
 
-	nights = nights_between(arrival, departure)
+	nights = stay_nights(arrival, departure) or [getdate(arrival)]   # a short stay: its one date
 	rooms = _physical_rooms(property_name, room_type)
-	promised = _promised_rooms(property_name, arrival, departure, exclude_line=exclude_line)
+	promised = _promised_rooms(
+		property_name, arrival, departure, exclude_line=exclude_line, arrival_time=arrival_time, departure_time=departure_time
+	)
 
 	# A guest in the room right now blocks an assignment starting today; it
 	# says nothing about a stay beginning after they are due to leave, which

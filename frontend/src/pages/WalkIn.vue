@@ -287,6 +287,29 @@
                 :options="ratePlanOptions"
               />
 
+              <div v-if="shortKind" class="space-y-2 rounded border border-outline-gray-1 p-3">
+                <p class="text-p-sm text-ink-gray-7">{{ t('page.walk_in.short_stay_note', { kind: shortKind }) }}</p>
+                <div class="grid gap-3 sm:grid-cols-3">
+                  <FormControl v-model="draft.arrival_time" type="time" :label="t('page.walk_in.arrival_time')" />
+                  <FormControl
+                    v-if="shortKind === 'Day Use'"
+                    v-model="draft.departure_time"
+                    type="time"
+                    :label="t('page.walk_in.departure_time')"
+                  />
+                  <FormControl
+                    v-else
+                    v-model.number="draft.blocks"
+                    type="number"
+                    min="1"
+                    :label="t('page.walk_in.blocks', { hours: selectedPlan?.block_hours })"
+                  />
+                  <p v-if="quote.data?.departure_time" class="self-end text-p-sm text-ink-gray-6">
+                    {{ t('page.walk_in.until', { time: hhmm(quote.data.departure_time) }) }}
+                  </p>
+                </div>
+              </div>
+
               <LoadingState v-if="quote.loading" />
               <ErrorState v-else-if="quote.error" :error="quote.error" :on-retry="runQuote" />
 
@@ -459,7 +482,9 @@ const assignable = assignableRoomsResource()
 const quote = quoteResource()
 const guestSearch = searchGuestsResource()
 const createWalkIn = createWalkInResource()
-const ratePlans = listResource('Rate Plan', { fields: ['name', 'rate_plan_name'] })
+const ratePlans = listResource('Rate Plan', {
+  fields: ['name', 'rate_plan_name', 'stay_kind', 'block_hours', 'day_use_from', 'day_use_until'],
+})
 
 /**
  * Where the in-progress walk-in lives while the agent leaves the page.
@@ -503,6 +528,9 @@ const draft = reactive({
   room_type: '',
   room: '',
   rate_plan: '',
+  arrival_time: '',
+  departure_time: '',
+  blocks: 1,
   billing_instructions: '',
   special_requests: '',
   allow_unready: false,
@@ -538,7 +566,18 @@ const nights = computed(() => {
 })
 
 // Form feedback, not a rule: the server re-checks and refuses regardless.
-const datesValid = computed(() => nights.value > 0)
+// A day-use or hourly plan makes the stay same-day: hours instead of nights.
+const selectedPlan = computed(() => (ratePlans.data || []).find((row) => row.name === draft.rate_plan) || null)
+const shortKind = computed(() =>
+  selectedPlan.value?.stay_kind && selectedPlan.value.stay_kind !== 'Night' ? selectedPlan.value.stay_kind : '',
+)
+// Frappe serialises a Time as 'H:MM:SS' without a leading zero; an <input type=time> wants 'HH:MM'.
+const hhmm = (value) => {
+  if (!value) return ''
+  const [h, m] = String(value).split(':')
+  return `${String(h).padStart(2, '0')}:${String(m || '00').padStart(2, '0')}`
+}
+const datesValid = computed(() => nights.value > 0 || (Boolean(shortKind.value) && nights.value === 0))
 
 const roomTypeChoices = computed(() => {
   const types = search.data?.room_types || {}
@@ -728,11 +767,14 @@ function runQuote() {
     property: property.activeName.value,
     room_type: draft.room_type,
     arrival: businessDate.value,
-    departure: draft.departure_date,
+    departure: shortKind.value ? businessDate.value : draft.departure_date,
     rate_plan: draft.rate_plan || undefined,
     adults: draft.adults,
     children: draft.children,
     rooms: 1,
+    arrival_time: shortKind.value ? draft.arrival_time || undefined : undefined,
+    departure_time: shortKind.value === 'Day Use' ? draft.departure_time || undefined : undefined,
+    blocks: shortKind.value === 'Hourly' ? draft.blocks || 1 : undefined,
   }).catch(ignoreRejection)
 }
 
@@ -823,7 +865,10 @@ async function submit() {
     const created = await createWalkIn.submit({
       property: property.activeName.value,
       guest: draft.guest,
-      departure_date: draft.departure_date,
+      departure_date: shortKind.value ? businessDate.value : draft.departure_date,
+      arrival_time: shortKind.value ? draft.arrival_time || undefined : undefined,
+      departure_time: shortKind.value === 'Day Use' ? draft.departure_time || undefined : undefined,
+      blocks: shortKind.value === 'Hourly' ? draft.blocks || 1 : undefined,
       room_type: draft.room_type,
       room: draft.room,
       adults: draft.adults,
@@ -845,6 +890,22 @@ async function submit() {
     submitting.value = false
   }
 }
+
+// A short-stay plan fixes departure to the business date and takes the plan's hours as defaults.
+watch(shortKind, (kind) => {
+  if (!kind) return
+  draft.departure_date = businessDate.value
+  if (kind === 'Day Use') {
+    draft.arrival_time = draft.arrival_time || hhmm(selectedPlan.value.day_use_from)
+    draft.departure_time = draft.departure_time || hhmm(selectedPlan.value.day_use_until)
+  }
+})
+watch(
+  () => [draft.arrival_time, draft.departure_time, draft.blocks],
+  () => {
+    if (shortKind.value && draft.room_type) runQuote()
+  },
+)
 
 /* ----------------------------------------------------------------- wiring */
 

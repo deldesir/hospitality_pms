@@ -424,9 +424,10 @@ describe('the Command Center expresses direction logically', () => {
     })
   }
 
-  it('uses only translation keys both catalogues already carry', () => {
+  it('uses only translation keys every catalogue already carries', () => {
     const en = JSON.parse(readFileSync(join(SRC, 'locales', 'en.json'), 'utf8'))
     const ar = JSON.parse(readFileSync(join(SRC, 'locales', 'ar.json'), 'utf8'))
+    const fr = JSON.parse(readFileSync(join(SRC, 'locales', 'fr.json'), 'utf8'))
 
     for (const path of FILES) {
       const source = readFileSync(path, 'utf8')
@@ -434,6 +435,7 @@ describe('the Command Center expresses direction logically', () => {
 
       expect(used.filter((key) => !(key in en))).toEqual([])
       expect(used.filter((key) => !(key in ar))).toEqual([])
+      expect(used.filter((key) => !(key in fr))).toEqual([])
     }
   })
 })

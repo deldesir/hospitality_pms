@@ -11,8 +11,9 @@ from frappe.permissions import AUTOMATIC_ROLES
 
 RTL_LANGUAGES = {"ar", "he", "fa", "ur"}
 
-#: Languages the operational frontend ships message catalogues for.
-SUPPORTED_LANGUAGES = ("en", "ar")
+#: Languages the operational frontend ships message catalogues for
+#: (frontend/src/locales/<code>.json), and the server a PO file for (locale/<code>.po).
+SUPPORTED_LANGUAGES = ("en", "ar", "fr")
 
 
 @frappe.whitelist(methods=["GET"])

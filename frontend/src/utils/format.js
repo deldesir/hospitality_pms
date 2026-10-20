@@ -7,9 +7,17 @@
  */
 import { locale } from '@/utils/i18n'
 
-/** Intl locale tag for the active UI language. */
+/**
+ * Intl locale tag for the active UI language.
+ *
+ * One entry per catalogue in `utils/i18n`; a locale without an entry formats as
+ * British English, which is what every date on every board did before there was
+ * a second language.
+ */
+const INTL_TAGS = { ar: 'ar', fr: 'fr' }
+
 function tag() {
-  return locale.value === 'ar' ? 'ar' : 'en-GB'
+  return INTL_TAGS[locale.value] || 'en-GB'
 }
 
 /**

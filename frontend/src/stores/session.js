@@ -17,7 +17,7 @@ const state = reactive({
   hasDeskAccess: false,
   language: 'en',
   direction: 'ltr',
-  supportedLanguages: ['en', 'ar'],
+  supportedLanguages: ['en', 'ar', 'fr'],
   system: {},
   loaded: false,
 })
@@ -30,7 +30,7 @@ export const sessionResource = apiResource('session.get_session_context', {
     state.hasDeskAccess = Boolean(data.has_desk_access)
     state.language = data.language
     state.direction = data.direction
-    state.supportedLanguages = data.supported_languages || ['en', 'ar']
+    state.supportedLanguages = data.supported_languages || ['en', 'ar', 'fr']
     state.system = data.system || {}
     state.loaded = true
 

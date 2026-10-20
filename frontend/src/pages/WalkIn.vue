@@ -571,7 +571,12 @@ const selectedPlan = computed(() => (ratePlans.data || []).find((row) => row.nam
 const shortKind = computed(() =>
   selectedPlan.value?.stay_kind && selectedPlan.value.stay_kind !== 'Night' ? selectedPlan.value.stay_kind : '',
 )
-const hhmm = (value) => (value ? String(value).slice(0, 5) : '')
+// Frappe serialises a Time as 'H:MM:SS' without a leading zero; an <input type=time> wants 'HH:MM'.
+const hhmm = (value) => {
+  if (!value) return ''
+  const [h, m] = String(value).split(':')
+  return `${String(h).padStart(2, '0')}:${String(m || '00').padStart(2, '0')}`
+}
 const datesValid = computed(() => nights.value > 0 || (Boolean(shortKind.value) && nights.value === 0))
 
 const roomTypeChoices = computed(() => {

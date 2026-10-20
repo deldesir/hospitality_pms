@@ -1293,5 +1293,15 @@
   "page.reservation.rooms.change_rate_plan": "Change rate plan",
   "page.reservation.rooms.rate_plan_hint": "Only plans the server will price for this room type on these dates are offered.",
   "page.reservation.rooms.rate_plan_none": "No rate plan covers this room type on these dates.",
-  "page.reservation.rooms.rate_plan_changed": "The rate plan was changed."
+  "page.reservation.rooms.rate_plan_changed": "The rate plan was changed.",
+  "page.reservation_new.short_stay_note": "{kind}: a same-day stay. The guest leaves on the arrival date; give the hours.",
+  "page.reservation_new.arrival_time": "From (time)",
+  "page.reservation_new.departure_time": "Until (time)",
+  "page.reservation_new.blocks": "Blocks of {hours} h",
+  "page.reservation_new.until": "until {time}",
+  "page.walk_in.short_stay_note": "{kind}: a same-day stay. Departure is today; give the hours.",
+  "page.walk_in.arrival_time": "From (time)",
+  "page.walk_in.departure_time": "Until (time)",
+  "page.walk_in.blocks": "Blocks of {hours} h",
+  "page.walk_in.until": "until {time}"
 }

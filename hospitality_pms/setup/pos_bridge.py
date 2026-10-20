@@ -1,5 +1,8 @@
 """The fields the point-of-sale bridge needs on ERPNext documents.
 
+On the till's side: the POS Profile switch, and the room on the Customer the till shows.
+On the invoice: where a sale was charged.
+
 Custom Fields rather than DocType changes: ERPNext stays untouched, and a site that
 removes this app keeps its invoices readable. Created on install and on every migrate;
 `create_custom_fields` is idempotent.
@@ -17,6 +20,20 @@ CUSTOM_FIELDS = {
 			"description": (
 				"A sale put on the customer's account (Pay on Account) is charged to that "
 				"customer's stay in house and settled at checkout with the room (Hospitality PMS)."
+			),
+		},
+	],
+	"Customer": [
+		{
+			"fieldname": "hpms_room",
+			"label": "In-house room",
+			"fieldtype": "Data",
+			"insert_after": "customer_name",
+			"read_only": 1,
+			"no_copy": 1,
+			"description": (
+				"The room the guest is in while in house, kept by the Hospitality PMS; "
+				"a POS Next till shows it beside the name."
 			),
 		},
 	],

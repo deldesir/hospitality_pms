@@ -890,31 +890,44 @@ def _stale_posting_message(log: str) -> str:
 	).format(log)
 
 
-def record_external_invoice(doc, invoice: str, amount: float, idempotency_key: str, *, actor: str | None = None) -> str:
-	"""Enter an invoice ERPNext already holds (a point-of-sale sale charged to the room) in
-	the posting log as posted, so folio payments allocate against it and reconciliation
-	knows it is this folio's. Nothing is sent to ERPNext: the document exists."""
+def record_external_document(
+	doc, posting_type: str, erp_document: str, amount: float, idempotency_key: str, *, actor: str | None = None
+) -> str:
+	"""Enter a document ERPNext already holds in the posting log as posted.
+
+	A point-of-sale sale charged to the room, or a receipt taken at the till against it:
+	ERPNext wrote the document, the folio only learns of it. Once logged, folio payments
+	allocate against the invoice, checkout does not raise the receipt again, and the
+	reconciliation counts both as this folio's. Nothing is sent to ERPNext.
+	"""
 	log, already_done = _claim(
 		doc.property,
-		"Sales Invoice",
+		posting_type,
 		idempotency_key,
 		folio=doc.name,
 		stay=doc.stay,
 		reservation=doc.reservation,
 		guest=doc.guest,
 		amount=amount,
-		payload={"source": "pos", "invoice": invoice},
+		payload={"source": "pos", "document": erp_document},
 	)
 	if not already_done:
-		_mark_posted(log, "Sales Invoice", invoice, actor=actor)
+		_mark_posted(log, posting_type, erp_document, actor=actor)
 	return log
 
 
-def cancel_external_invoice(idempotency_key: str, reason: str) -> None:
+def record_external_invoice(doc, invoice: str, amount: float, idempotency_key: str, *, actor: str | None = None) -> str:
+	return record_external_document(doc, "Sales Invoice", invoice, amount, idempotency_key, actor=actor)
+
+
+def cancel_external_posting(idempotency_key: str, reason: str) -> None:
 	"""The ERPNext document behind an external posting is being cancelled: say so on the log."""
 	log = frappe.db.get_value(POSTING_LOG, {"idempotency_key": idempotency_key}, "name")
 	if log:
 		frappe.db.set_value(POSTING_LOG, log, {"posting_status": CANCELLED, "error_message": reason}, update_modified=True)
+
+
+cancel_external_invoice = cancel_external_posting
 
 
 def _claim(
@@ -1823,6 +1836,9 @@ def _payment_within_authority(doc, row, log: str, company: str, actor: str, *, b
 		entry.paid_to = receivable
 
 	entry.remarks = _("Hospitality folio {0} payment {1}").format(doc.name, row.name)
+	# This receipt settles the folio; the POS bridge mirrors till receipts onto folios and
+	# must not mirror the folio's own settlement back (pos_bridge.FOLIO_SETTLEMENT_FLAG).
+	entry.flags.hospitality_folio_settlement = True
 
 	# A receipt is money the guest handed over against their bill, so it has to
 	# say which bill. Submitted without references, ERPNext could only record it

@@ -107,7 +107,15 @@ doc_events = {
 		"on_submit": "hospitality_pms.services.pos_bridge.on_submit",
 		"before_cancel": "hospitality_pms.services.pos_bridge.before_cancel",
 	},
+	# A receipt taken at the till against such a sale is mirrored onto the folio.
+	"Payment Entry": {
+		"on_submit": "hospitality_pms.services.pos_bridge.on_payment_submit",
+		"before_cancel": "hospitality_pms.services.pos_bridge.before_payment_cancel",
+	},
 }
+
+# POS Next extension point: the till's customer picker shows the room of a guest in house.
+pos_next_customer_annotate = ["hospitality_pms.services.pos_bridge.annotate_till_customers"]
 
 # ------------------------------------------------------------------------------
 # Scheduled Tasks

@@ -21,6 +21,7 @@ from frappe import _
 from frappe.utils import flt, now_datetime
 
 from hospitality_pms.services import folio as folio_service
+from hospitality_pms.services import guests as guest_service
 from hospitality_pms.services import posting as posting_service
 from hospitality_pms.services import reservations as reservation_service
 from hospitality_pms.services import rooms as room_service
@@ -254,6 +255,11 @@ def check_out(
 		room_service.mark_checked_out(
 			doc.room, reference_doctype=STAY_DOCTYPE, reference_name=stay
 		)
+	# The room label on the guest's Customer comes off (the till stops showing it).
+	try:
+		guest_service.sync_customer_room(doc.guest)
+	except Exception:
+		frappe.log_error(title="Guest Customer at check-out", message=frappe.get_traceback())
 
 	housekeeping_task = _raise_housekeeping_task(doc)
 

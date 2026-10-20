@@ -5,14 +5,21 @@ on the guest's folio. What these tests defend: the folio line is already posted 
 invoice is its ERPNext document), the checkout invoice leaves it out, the checkout payment
 allocates against the POS invoice, a stranger cannot run a tab on a room till, and a
 cancellation or a return takes the amount back off the folio while it is still open.
+
+Money the other way: a receipt taken at the till against the bill lands on the folio as a
+payment already posted, checkout settles only the rest, and cancelling the receipt puts the
+money back while the folio is open and is refused once the guest has settled. A return
+refunded partly in cash credits the folio with the unpaid share only. The checkout receipt
+is never counted in a till shift. And the guest's Customer carries the room while in house.
 """
 
 import unittest
 
 import frappe
 from frappe.tests import IntegrationTestCase
-from frappe.utils import flt
+from frappe.utils import flt, now_datetime, nowdate
 
+from hospitality_pms.services import checkout as checkout_service
 from hospitality_pms.services import folio as folio_service
 from hospitality_pms.services import guests as guest_service
 from hospitality_pms.services import pos_bridge
@@ -33,7 +40,8 @@ class TestRoomCharge(IntegrationTestCase):
 		cls.world = PostingWorld("POSB", "PB")
 		fx = cls.world.fixtures
 		cls.room_type = fx.room_type(cls.world.property, "BAR", base_rate=100)
-		cls.rooms = fx.rooms(cls.world.property, cls.room_type, count=12)
+		# Check-ins commit and stay in house, one vacant room per check-in across the class.
+		cls.rooms = fx.rooms(cls.world.property, cls.room_type, count=32)
 		cls.rate_plan = fx.rate_plan(cls.world.property, cls.room_type, base_rate=100)
 		cls.beer = fx.erp_item("BEER")
 		cls.till = cls._pos_profile("Bar", charge_to_room=1)
@@ -68,6 +76,7 @@ class TestRoomCharge(IntegrationTestCase):
 				"write_off_cost_center": frappe.get_cached_value("Company", company, "cost_center"),
 				"write_off_limit": 1,
 				"payments": [{"mode_of_payment": "Cash", "default": 1}],
+				"applicable_for_users": [{"user": frappe.session.user, "default": 1}],
 				pos_bridge.TILL_FLAG: charge_to_room,
 			}
 		)
@@ -78,11 +87,13 @@ class TestRoomCharge(IntegrationTestCase):
 	# -- a guest in house, with the Customer a till can sell to ---------------
 
 	def free_room(self) -> str:
-		"""Check-ins commit, so a guest stays in house across tests: take the next vacant room."""
+		"""Check-ins commit, so a guest stays in house across tests: take the next vacant room
+		that housekeeping has not marked dirty (a checkout in an earlier test leaves one)."""
 		for room in self.rooms:
-			if frappe.db.get_value("Hotel Room", room, "occupancy_status") == "Vacant":
+			state = frappe.db.get_value("Hotel Room", room, ["occupancy_status", "housekeeping_status"], as_dict=True)
+			if state.occupancy_status == "Vacant" and state.housekeeping_status in ("Clean", "Inspected"):
 				return room
-		raise AssertionError("no vacant room left for this test")
+		raise AssertionError("no vacant, clean room left for this test")
 
 	def check_in(self, first_name: str) -> dict:
 		fx = self.world.fixtures
@@ -126,6 +137,53 @@ class TestRoomCharge(IntegrationTestCase):
 			fields=["name", "charge_type", "amount", "total_amount", "is_posted_to_erp", "sales_invoice", "is_reversed", "idempotency_key"],
 			order_by="idx asc",
 		)
+
+	def payments(self, folio: str) -> list[dict]:
+		return frappe.get_all(
+			"Folio Payment",
+			filters={"parent": folio},
+			fields=["name", "payment_method", "amount", "is_posted_to_erp", "payment_entry", "is_reversed", "idempotency_key"],
+			order_by="idx asc",
+		)
+
+	def till_receipt(self, invoice: str, amount: float) -> str:
+		"""Money taken at the till against a submitted invoice, the way POS Next takes it."""
+		from pos_next.api.partial_payments import create_payment_entry
+
+		name = create_payment_entry(invoice, amount, mode_of_payment="Cash")
+		frappe.db.commit()
+		return name
+
+	def balance(self, folio: str) -> float:
+		return flt(frappe.db.get_value("Guest Folio", folio, "balance"))
+
+	def open_till_shift(self) -> str:
+		"""The test user running the till, as a cashier who also works the desk would."""
+		shift = frappe.get_doc(
+			{
+				"doctype": "POS Opening Shift",
+				"period_start_date": now_datetime(),
+				"posting_date": nowdate(),
+				"company": self.world.company,
+				"pos_profile": self.till,
+				"user": frappe.session.user,
+				"status": "Open",
+				"balance_details": [{"mode_of_payment": "Cash", "amount": 0}],
+			}
+		)
+		shift.flags.ignore_permissions = True
+		shift.insert()
+		shift.submit()
+		frappe.db.commit()
+
+		def close():
+			# The sales and receipts of the shift link to it, so it cannot be cancelled or
+			# deleted; closing it is what stops it being the user's open shift.
+			frappe.db.set_value("POS Opening Shift", shift.name, "status", "Closed", update_modified=False)
+			frappe.db.commit()
+
+		self.addCleanup(close)
+		return shift.name
 
 	# -- tests ---------------------------------------------------------------
 
@@ -270,3 +328,193 @@ class TestRoomCharge(IntegrationTestCase):
 		self.assertAlmostEqual(
 			flt(frappe.db.get_value("Guest Folio", g["folio"], "balance")), flt(inv.grand_total) - 150.0, places=2
 		)
+
+	def test_a_return_refunded_partly_in_cash_credits_the_folio_with_the_unpaid_share(self):
+		g = self.check_in("Partly")
+		inv = self.sale(g["customer"], self.till, paid=100)
+		self.assertAlmostEqual(flt(inv.outstanding_amount), 200.0, places=2)
+		self.assertAlmostEqual(flt(self.charges(g["folio"], pos_bridge.CHARGE_TYPE)[0]["amount"]), 200.0, places=2)
+		# One beer back: 150 of goods, of which the till refunds the paid share (50) in cash
+		# and credits the receivable for the rest (100).
+		ret = frappe.get_doc(
+			{
+				"doctype": "Sales Invoice",
+				"company": self.world.company,
+				"customer": g["customer"],
+				"is_pos": 1,
+				"is_return": 1,
+				"return_against": inv.name,
+				"update_outstanding_for_self": 0,
+				"pos_profile": self.till,
+				"update_stock": 0,
+				"items": [{"item_code": self.beer, "qty": -1, "rate": 150}],
+				"payments": [{"mode_of_payment": "Cash", "amount": -50}],
+			}
+		)
+		ret.flags.ignore_permissions = True
+		ret.insert()
+		ret.submit()
+		frappe.db.commit()
+		adjustments = self.charges(g["folio"], "Adjustment")
+		self.assertEqual(len(adjustments), 1)
+		self.assertAlmostEqual(flt(adjustments[0]["amount"]), -100.0, places=2)
+		self.assertAlmostEqual(self.balance(g["folio"]), 100.0, places=2)
+		self.assertAlmostEqual(flt(frappe.db.get_value("Sales Invoice", inv.name, "outstanding_amount")), 100.0, places=2)
+
+	def test_a_return_refunded_in_full_at_the_till_leaves_the_folio_alone(self):
+		g = self.check_in("Refunded")
+		inv = self.sale(g["customer"], self.till, qty=2, rate=100, paid=100)
+		self.assertAlmostEqual(self.balance(g["folio"]), 100.0, places=2)
+		# One of the two back, and the till hands the whole 100 back in cash: the guest still
+		# owes the other one, so the folio does not move.
+		ret = frappe.get_doc(
+			{
+				"doctype": "Sales Invoice",
+				"company": self.world.company,
+				"customer": g["customer"],
+				"is_pos": 1,
+				"is_return": 1,
+				"return_against": inv.name,
+				"update_outstanding_for_self": 0,
+				"pos_profile": self.till,
+				"update_stock": 0,
+				"items": [{"item_code": self.beer, "qty": -1, "rate": 100}],
+				"payments": [{"mode_of_payment": "Cash", "amount": -100}],
+			}
+		)
+		ret.flags.ignore_permissions = True
+		ret.insert()
+		ret.submit()
+		frappe.db.commit()
+		self.assertEqual(self.charges(g["folio"], "Adjustment"), [])
+		self.assertAlmostEqual(self.balance(g["folio"]), 100.0, places=2)
+		self.assertAlmostEqual(flt(frappe.db.get_value("Sales Invoice", inv.name, "outstanding_amount")), 100.0, places=2)
+
+	def test_a_receipt_at_the_till_lands_on_the_folio_and_checkout_settles_the_rest(self):
+		g = self.check_in("Collect")
+		inv = self.sale(g["customer"], self.till)
+		bar = flt(inv.grand_total)
+		receipt = self.till_receipt(inv.name, 100)
+
+		rows = self.payments(g["folio"])
+		self.assertEqual(len(rows), 1)
+		self.assertAlmostEqual(flt(rows[0]["amount"]), 100.0, places=2)
+		self.assertEqual(rows[0]["is_posted_to_erp"], 1)
+		self.assertEqual(rows[0]["payment_entry"], receipt)
+		self.assertEqual(rows[0]["payment_method"], "Cash")
+		self.assertAlmostEqual(self.balance(g["folio"]), bar - 100, places=2)
+		log = frappe.db.get_value(
+			posting_service.POSTING_LOG,
+			{"idempotency_key": pos_bridge.receipt_key(receipt, inv.name)},
+			["posting_status", "erp_doctype", "erp_document", "amount"],
+			as_dict=True,
+		)
+		self.assertEqual((log["posting_status"], log["erp_doctype"], log["erp_document"]), (posting_service.POSTED, "Payment Entry", receipt))
+		self.assertAlmostEqual(flt(log["amount"]), 100.0, places=2)
+
+		# Checkout: the folio invoice carries the minibar only; the payment covers the
+		# minibar and what is still owed on the bar bill, and nothing more.
+		self.world.charge(g["folio"], "Minibar", 40, 2, f"collect-minibar-{inv.name}")
+		posted = posting_service.post_folio_invoice(g["folio"])
+		checkout_invoice = posted["erp_document"]
+		payment = self.world.payment(g["folio"], (bar - 100) + 42, f"collect-{inv.name}")
+		entry = posting_service.post_folio_payment(g["folio"], payment["row"])["erp_document"]
+		refs = {r["reference_name"]: flt(r["allocated_amount"]) for r in payment_references(entry)}
+		self.assertAlmostEqual(refs.get(inv.name, 0), bar - 100, places=2)
+		self.assertAlmostEqual(refs.get(checkout_invoice, 0), 42.0, places=2)
+		self.assertAlmostEqual(flt(frappe.db.get_value("Sales Invoice", inv.name, "outstanding_amount")), 0, places=2)
+		self.assertAlmostEqual(self.balance(g["folio"]), 0, places=2)
+		# The folio's own settlement is not mirrored back onto it.
+		self.assertEqual(len(self.payments(g["folio"])), 2)
+
+	def test_the_pms_checkout_receipt_is_not_a_second_receipt_on_the_folio(self):
+		g = self.check_in("Twice2")
+		inv = self.sale(g["customer"], self.till)
+		payment = self.world.payment(g["folio"], flt(inv.grand_total), f"own-{inv.name}")
+		posting_service.post_folio_payment(g["folio"], payment["row"])
+		frappe.db.commit()
+		rows = self.payments(g["folio"])
+		self.assertEqual(len(rows), 1)
+		self.assertEqual(rows[0]["name"], payment["row"])
+
+	def test_cancelling_the_till_receipt_puts_the_money_back_on_the_folio(self):
+		g = self.check_in("Undo")
+		inv = self.sale(g["customer"], self.till)
+		bar = flt(inv.grand_total)
+		receipt = self.till_receipt(inv.name, bar)
+		self.assertAlmostEqual(self.balance(g["folio"]), 0, places=2)
+
+		entry = frappe.get_doc("Payment Entry", receipt)
+		entry.flags.ignore_permissions = True
+		entry.cancel()
+		frappe.db.commit()
+
+		rows = self.payments(g["folio"])
+		self.assertEqual(len(rows), 1)
+		self.assertEqual(rows[0]["is_reversed"], 1)
+		self.assertAlmostEqual(self.balance(g["folio"]), bar, places=2)
+		self.assertEqual(
+			frappe.db.get_value(posting_service.POSTING_LOG, {"idempotency_key": pos_bridge.receipt_key(receipt, inv.name)}, "posting_status"),
+			posting_service.CANCELLED,
+		)
+		self.assertAlmostEqual(flt(frappe.db.get_value("Sales Invoice", inv.name, "outstanding_amount")), bar, places=2)
+
+	def test_a_till_receipt_cannot_be_cancelled_once_the_guest_has_settled(self):
+		g = self.check_in("Settled")
+		inv = self.sale(g["customer"], self.till)
+		receipt = self.till_receipt(inv.name, flt(inv.grand_total))
+		folio_service.transition(g["folio"], folio_service.READY)
+		folio_service.transition(g["folio"], folio_service.SETTLED)
+		folio_service.transition(g["folio"], folio_service.CLOSED)
+		frappe.db.commit()
+		entry = frappe.get_doc("Payment Entry", receipt)
+		entry.flags.ignore_permissions = True
+		with self.assertRaises(FolioError):
+			entry.cancel()
+		frappe.db.rollback()
+		self.assertEqual(frappe.db.get_value("Payment Entry", receipt, "docstatus"), 1)
+
+	def test_a_receipt_after_the_folio_closed_is_noted_and_left_to_receivables(self):
+		g = self.check_in("Later")
+		inv = self.sale(g["customer"], self.till)
+		# The folio was settled and closed with the bar invoice still open in ERPNext (its
+		# desk receipt never posted): what the till collects later belongs to receivables.
+		self.world.payment(g["folio"], flt(inv.grand_total), f"later-{inv.name}")
+		folio_service.transition(g["folio"], folio_service.READY)
+		folio_service.transition(g["folio"], folio_service.SETTLED)
+		folio_service.transition(g["folio"], folio_service.CLOSED)
+		frappe.db.commit()
+		receipt = self.till_receipt(inv.name, flt(inv.grand_total))
+		self.assertEqual([p for p in self.payments(g["folio"]) if p["payment_entry"] == receipt], [])
+		self.assertEqual(frappe.db.get_value("Payment Entry", receipt, "docstatus"), 1)
+		self.assertTrue(
+			frappe.db.exists("Folio Log", {"folio": g["folio"], "action": "Point of sale receipt after settlement"})
+		)
+
+	def test_the_checkout_receipt_is_not_counted_in_the_cashiers_open_till_shift(self):
+		shift = self.open_till_shift()
+		g = self.check_in("Shift")
+		inv = self.sale(g["customer"], self.till)
+		payment = self.world.payment(g["folio"], flt(inv.grand_total), f"shift-{inv.name}")
+		entry = posting_service.post_folio_payment(g["folio"], payment["row"])["erp_document"]
+		frappe.db.commit()
+		self.assertFalse(frappe.db.get_value("Payment Entry", entry, "posa_pos_opening_shift"))
+		# whereas money the same user takes at the till does belong to the drawer
+		receipt = self.till_receipt(self.sale(g["customer"], self.till, qty=1).name, 150)
+		self.assertEqual(frappe.db.get_value("Payment Entry", receipt, "posa_pos_opening_shift"), shift)
+
+	def test_check_in_labels_the_customer_with_the_room_and_check_out_clears_it(self):
+		g = self.check_in("Labelled")
+		room = frappe.db.get_value("Stay", g["stay"], "room")
+		self.assertEqual(frappe.db.get_value("Customer", g["customer"], guest_service.CUSTOMER_ROOM_FIELD), room)
+		shown = [{"name": g["customer"], "customer_name": "x"}, {"name": "nobody-" + self.world.tag}]
+		pos_bridge.annotate_till_customers(shown, self.till)
+		self.assertEqual(shown[0].get("note"), f"Room {room}")
+		self.assertNotIn("note", shown[1])
+
+		checkout_service.check_out(g["stay"], post_to_erp=False)
+		frappe.db.commit()
+		self.assertFalse(frappe.db.get_value("Customer", g["customer"], guest_service.CUSTOMER_ROOM_FIELD))
+		shown = [{"name": g["customer"]}]
+		pos_bridge.annotate_till_customers(shown, self.till)
+		self.assertNotIn("note", shown[0])

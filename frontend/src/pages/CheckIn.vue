@@ -53,7 +53,7 @@
         </div>
 
         <div
-          v-for="line in reservation.rooms"
+          v-for="line in rooms"
           :key="line.name"
           class="space-y-3 rounded border border-outline-gray-1 p-4"
         >
@@ -166,6 +166,8 @@ const guestDetail = getGuestResource()
 const checkIn = checkInResource()
 
 const reservation = computed(() => detail.data?.reservation || null)
+// The endpoint returns the room lines beside the reservation, not inside it (as Reservation.vue reads them).
+const rooms = computed(() => detail.data?.rooms || [])
 const guestData = computed(() => guestDetail.data || null)
 const canOverride = computed(() => session.hasRole(READINESS_OVERRIDE_ROLES))
 

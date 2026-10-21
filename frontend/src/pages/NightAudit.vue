@@ -106,9 +106,15 @@
             </div>
           </div>
 
-          <p v-if="isClosed" class="mt-3 text-p-sm text-ink-gray-6">
-            {{ t('page.night_audit.closed_statement', { date: formatDateTime(audit.closed_on) }) }}
-          </p>
+          <div v-if="isClosed" class="mt-3 flex flex-wrap items-center gap-3">
+            <p class="text-p-sm text-ink-gray-6">
+              {{ t('page.night_audit.closed_statement', { date: formatDateTime(audit.closed_on) }) }}
+            </p>
+            <!-- The closed audit is the last one; tonight's starts here (it was offered only on a first-ever audit). -->
+            <Button variant="solid" :loading="busy === 'start'" @click="doStart">
+              {{ t('page.night_audit.action.start') }}
+            </Button>
+          </div>
         </section>
 
         <!--
